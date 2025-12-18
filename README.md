@@ -71,6 +71,13 @@ Notes:
 - The app uses the same `SPREADSHEET_ID` configuration as the CLI.
 - On Streamlit Cloud, set your service account JSON in the app's Secrets as `gcp_service_account` (either as a TOML mapping or JSON string). The app will use `st.secrets["gcp_service_account"]` to authenticate so you don't need a local `credentials.json` file.
 
+DOI / Google Scholar integration:
+- You can paste a DOI or a Google Scholar link in the sidebar and click **Fetch metadata from DOI**. If a DOI is detected the app will fetch metadata via Crossref and show a preview row ready to sync or export.
+
+RCAAP export:
+- After parsing or fetching, click **Download RCAAP Metadata** to generate a CSV with headers: `dc.title`, `dc.contributor.author`, `dc.date.issued`, `dc.publisher`, `dc.identifier.doi`.
+- Author names are formatted as `Given Family` (normalized) and are joined with a **semicolon (;)** as required by RCAAP.
+
 ## Security notes ⚠️
 
 - Keep `credentials.json` private and do not check it into source control.

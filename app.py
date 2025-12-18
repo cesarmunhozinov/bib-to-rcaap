@@ -30,6 +30,11 @@ write_authors = st.sidebar.checkbox("Sync Authors", value=True)
 write_events = st.sidebar.checkbox("Sync Events", value=True)
 
 st.sidebar.markdown("---")
+st.sidebar.header("DOI / Google Scholar")
+doi_input = st.sidebar.text_input("DOI or Google Scholar link")
+fetch_doi = st.sidebar.button("Fetch metadata from DOI")
+
+st.sidebar.markdown("---")
 st.sidebar.header("Search sheet")
 search_query = st.sidebar.text_input("Search (Author or Title)")
 search_kind = st.sidebar.radio("Search by", ["Title", "Author"])
@@ -63,6 +68,20 @@ if st.sidebar.button("Run search"):
         except Exception as e:
             st.sidebar.error(f"Search failed: {e}")
 
+# helper: extract DOI from text
+import re
+from crossref.restful import Works
+
+
+def extract_doi(text: str) -> str | None:
+    if not text:
+        return None
+    m = re.search(r"(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", text, re.I)
+    if m:
+        return m.group(1)
+    return None
+
+
 # Parse uploaded file and show preview
 entries: List[Dict] | None = None
 if uploaded is not None:
@@ -74,39 +93,122 @@ if uploaded is not None:
         entries = bibdb.entries
         st.success(f"Parsed {len(entries)} entries")
 
-        titles = entries_to_titles(entries)
-        authors = entries_to_authors(entries)
-        events = entries_to_events(entries)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Titles (preview)")
-            st.table(titles[:preview_limit])
-        with col2:
-            st.subheader("Authors (preview)")
-            st.table(authors[:preview_limit])
-
-        if st.button("Sync to Google Sheets", key="sync"):
-            try:
-                try:
-                    creds_info = st.secrets.get("gcp_service_account")
-                except Exception:
-                    creds_info = None
-                db = RCAAPDatabase(creds_info=creds_info)
-                if write_titles and titles:
-                    db.write_titles(titles)
-                if write_authors and authors:
-                    db.write_authors(authors)
-                if write_events and events:
-                    db.write_events(events)
-                db.write_log(f"Streamlit sync: {uploaded.name} (titles={write_titles}, authors={write_authors}, events={write_events})")
-                st.success("Sync complete")
-            except Exception as e:
-                st.error(f"Sync failed: {e}")
     except Exception as e:
         st.error(f"Failed to parse file: {e}")
+
+# If DOI fetch requested, try to fetch metadata
+if doi_input and fetch_doi:
+    doi = extract_doi(doi_input)
+    if not doi:
+        st.sidebar.error("No DOI detected in the input.")
+    else:
+        try:
+            works = Works()
+            msg = works.doi(doi)
+            # build an entry compatible with the parser functions
+            title = msg.get("title")
+            if isinstance(title, list):
+                title = title[0] if title else ""
+            authors_list = []
+            for a in msg.get("author", []):
+                fam = a.get("family", "")
+                giv = a.get("given", "")
+                if fam and giv:
+                    authors_list.append(f"{fam}, {giv}")
+                elif fam:
+                    authors_list.append(fam)
+                elif giv:
+                    authors_list.append(giv)
+            author_field = " and ".join(authors_list)
+            entry = {
+                "ID": doi.replace("/", "_"),
+                "title": title,
+                "author": author_field,
+                "year": str(msg.get("issued", {}).get("date-parts", [[""]])[0][0]) if msg.get("issued") else "",
+                "journal": msg.get("container-title", [""])[0] if msg.get("container-title") else "",
+                "doi": doi,
+                "url": msg.get("URL", ""),
+                "publisher": msg.get("publisher", ""),
+            }
+            entries = [entry]
+            st.sidebar.success("Metadata fetched from Crossref")
+        except Exception as e:
+            st.sidebar.error(f"Crossref fetch failed: {e}")
+
+# If we have entries (either from upload or DOI fetch), map them
+titles = []
+authors = []
+events = []
+if entries:
+    titles = entries_to_titles(entries)
+    authors = entries_to_authors(entries)
+    events = entries_to_events(entries)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Titles (preview)")
+        st.table(titles[:preview_limit])
+    with col2:
+        st.subheader("Authors (preview)")
+        st.table(authors[:preview_limit])
+
+    # RCAAP export (primary action): generate CSV and expose a download button
+    def generate_rcaap_csv(titles_list, authors_list) -> str:
+        import csv
+        import io
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        headers = ["dc.title", "dc.contributor.author", "dc.date.issued", "dc.publisher", "dc.identifier.doi"]
+        writer.writerow(headers)
+
+        for t in titles_list:
+            key = t.get("key")
+            # find authors for this key, prefer normalized name
+            auths = [a.get("name_normalized") or a.get("name") for a in authors_list if a.get("key") == key]
+            authors_joined = "; ".join(auths)
+            row = [
+                t.get("title", ""),
+                authors_joined,
+                t.get("year", ""),
+                t.get("publisher", "") or "",
+                t.get("doi", ""),
+            ]
+            writer.writerow(row)
+        return output.getvalue()
+
+    csv_data = generate_rcaap_csv(titles, authors)
+
+    st.subheader("Actions")
+    # Primary: RCAAP export (download)
+    st.download_button(
+        "Download RCAAP Metadata",
+        data=csv_data,
+        file_name="rcaap_metadata.csv",
+        mime="text/csv",
+        key="rcaap_export",
+    )
+
+    # Secondary: sync to Google Sheets
+    if st.button("Sync to Google Sheets", key="sync"):
+        try:
+            try:
+                creds_info = st.secrets.get("gcp_service_account")
+            except Exception:
+                creds_info = None
+            db = RCAAPDatabase(creds_info=creds_info)
+            if write_titles and titles:
+                db.write_titles(titles)
+            if write_authors and authors:
+                db.write_authors(authors)
+            if write_events and events:
+                db.write_events(events)
+            db.write_log(f"Streamlit sync: {uploaded.name if uploaded is not None else doi_input} (titles={write_titles}, authors={write_authors}, events={write_events})")
+            st.success("Sync complete")
+        except Exception as e:
+            st.error(f"Sync failed: {e}")
 else:
-    st.info("Upload a .bib file from the sidebar to start.")
+    st.info("Upload a .bib file from the sidebar to start, or fetch metadata by DOI.")
 
 st.markdown("---")
 # Show which credentials source is in use

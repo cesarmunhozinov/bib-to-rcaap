@@ -4,3 +4,4 @@ bibtexparser
 python-dotenv
 pytest
 streamlit
+crossrefapi
