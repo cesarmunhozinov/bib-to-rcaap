@@ -39,7 +39,13 @@ if st.sidebar.button("Run search"):
         st.sidebar.warning("Enter a search term first.")
     else:
         try:
-            db = RCAAPDatabase()
+            # Access st.secrets safely — parsing can raise if no secrets file is present
+            try:
+                creds_info = st.secrets.get("gcp_service_account")
+            except Exception:
+                creds_info = None
+
+            db = RCAAPDatabase(creds_info=creds_info)
             # cached through the class
             titles = db._get_ws("Titles").get_all_records()
             authors = db._get_ws("Authors").get_all_records()
@@ -82,7 +88,11 @@ if uploaded is not None:
 
         if st.button("Sync to Google Sheets", key="sync"):
             try:
-                db = RCAAPDatabase()
+                try:
+                    creds_info = st.secrets.get("gcp_service_account")
+                except Exception:
+                    creds_info = None
+                db = RCAAPDatabase(creds_info=creds_info)
                 if write_titles and titles:
                     db.write_titles(titles)
                 if write_authors and authors:
@@ -99,4 +109,24 @@ else:
     st.info("Upload a .bib file from the sidebar to start.")
 
 st.markdown("---")
-st.caption("Uses service account credentials from `credentials.json` by default.")
+# Show which credentials source is in use
+import os
+creds_source = None
+try:
+    creds_info_probe = st.secrets.get("gcp_service_account")
+except Exception:
+    creds_info_probe = None
+
+if creds_info_probe:
+    creds_source = "Streamlit secrets (gcp_service_account)"
+elif os.path.exists("credentials.json"):
+    creds_source = "Local file: credentials.json"
+else:
+    creds_source = "No credentials found (set st.secrets['gcp_service_account'] on Streamlit Cloud or provide credentials.json locally)"
+
+if "Streamlit secrets" in creds_source:
+    st.success(f"Auth: {creds_source}")
+elif "Local file" in creds_source:
+    st.info(f"Auth: {creds_source}")
+else:
+    st.warning(creds_source)

@@ -17,15 +17,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. Place your Google service account credentials JSON at the project root as `credentials.json` (this file is in `.gitignore` and should never be committed).
+3. For local runs: place your Google service account credentials JSON at the project root as `credentials.json` (this file is in `.gitignore` and should never be committed), or set `CREDENTIALS_PATH` to an alternate path.
 
-4. Optionally set environment variables (or use the defaults):
+4. For Streamlit Cloud: add your service account JSON to the app Secrets as `gcp_service_account` (see below). When present, the app will prefer `st.secrets["gcp_service_account"]` and will not try to read a local `credentials.json` file.
+
+Notes on configuration:
 
 - `SPREADSHEET_ID` — the Google spreadsheet ID (defaults to the one in the repo)
-- `CREDENTIALS_PATH` — path to service account JSON (defaults to `credentials.json`)
+- `CREDENTIALS_PATH` — path to service account JSON (defaults to `credentials.json`, used for local runs only unless `creds_info` is not provided)
 
-You can set them in a `.env` file or export them in your shell.
-
+You can set these in a `.env` file or export them in your shell for local runs.
 ## Usage 🔧
 
 Dry run (parses file and prints what would be written):
@@ -67,7 +68,8 @@ streamlit run app.py
 
 Notes:
 - Use the sidebar to upload a `.bib` file, choose which tabs to sync and run searches on the existing sheet.
-- The app uses the same `CREDENTIALS_PATH` and `SPREADSHEET_ID` configuration as the CLI.
+- The app uses the same `SPREADSHEET_ID` configuration as the CLI.
+- On Streamlit Cloud, set your service account JSON in the app's Secrets as `gcp_service_account` (either as a TOML mapping or JSON string). The app will use `st.secrets["gcp_service_account"]` to authenticate so you don't need a local `credentials.json` file.
 
 ## Security notes ⚠️
 

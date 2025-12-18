@@ -23,11 +23,13 @@ from __future__ import annotations
 import os
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 from dotenv import load_dotenv
 import gspread
 from google.oauth2.service_account import Credentials
+
+import json
 
 load_dotenv()
 
@@ -47,11 +49,17 @@ class RCAAPDatabase:
 
     This class uses lazy connection: importing the module won't connect. Call
     `connect()` or one of the write methods to trigger the connection.
+
+    It supports two ways to provide service-account credentials:
+    - A path to a JSON file (default, via `creds_path`)
+    - A service-account info `dict` or JSON string (via `creds_info`), useful when
+      running on Streamlit Cloud using `st.secrets["gcp_service_account"]`.
     """
 
-    def __init__(self, spreadsheet_id: str = SPREADSHEET_ID, creds_path: str = CREDENTIALS_PATH):
+    def __init__(self, spreadsheet_id: str = SPREADSHEET_ID, creds_path: str = CREDENTIALS_PATH, creds_info: Optional[Union[dict, str]] = None):
         self.spreadsheet_id = spreadsheet_id
         self.creds_path = creds_path
+        self.creds_info = creds_info
         self.client: Optional[gspread.Client] = None
         self.sheet: Optional[gspread.Spreadsheet] = None
         self._worksheets: Dict[str, gspread.Worksheet] = {}
@@ -61,10 +69,23 @@ class RCAAPDatabase:
         if self.sheet is not None:
             return
 
-        if not os.path.exists(self.creds_path):
-            raise FileNotFoundError(f"Credentials file not found: {self.creds_path}")
+        # If creds_info provided (dict or JSON string), prefer it (Streamlit Cloud st.secrets)
+        creds = None
+        if self.creds_info is not None:
+            info = self.creds_info
+            if isinstance(info, str):
+                try:
+                    info = json.loads(info)
+                except Exception:
+                    # If it's not valid JSON, leave it as-is and let from_service_account_info raise
+                    pass
+            creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+        else:
+            # Fall back to file-based credentials
+            if not os.path.exists(self.creds_path):
+                raise FileNotFoundError(f"Credentials file not found: {self.creds_path}")
+            creds = Credentials.from_service_account_file(self.creds_path, scopes=SCOPES)
 
-        creds = Credentials.from_service_account_file(self.creds_path, scopes=SCOPES)
         self.client = gspread.authorize(creds)
         self.sheet = self.client.open_by_key(self.spreadsheet_id)
 
