@@ -16,8 +16,8 @@ from database import RCAAPDatabase
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bib-to-rcaap-app")
 
-st.set_page_config(page_title="Bib-to-RCAAP", layout="wide")
-st.title("BibTeX → RCAAP Google Sheets")
+st.set_page_config(page_title="RCAAP Converter", layout="wide")
+st.title("BibTeX → RCAAP Converter")
 
 # Compact sidebar styling: reduce vertical spacing, tighter dividers, and ensure elements are comfortably laid out
 st.markdown(
