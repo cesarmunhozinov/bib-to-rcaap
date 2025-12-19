@@ -25,8 +25,9 @@ st.markdown(
     <style>
     /* Target the sidebar container */
     [data-testid="stSidebar"] .block-container { padding: 6px 10px; }
-    /* Tighter spacing between widgets */
+    /* Tighter spacing between widgets and markdown labels */
     [data-testid="stSidebar"] .stButton, [data-testid="stSidebar"] .stTextInput, [data-testid="stSidebar"] .stFileUploader, [data-testid="stSidebar"] .stRadio { margin-bottom: 6px; }
+    [data-testid="stSidebar"] .stMarkdown { margin: 4px 0 2px 0; }
     /* Compact horizontal rule for sidebar dividers */
     [data-testid="stSidebar"] hr { margin: 6px 0; border: none; border-top: 1px solid #eee; }
     /* Make sidebar buttons full width (and not cramped) */
@@ -43,12 +44,16 @@ preview_limit = 50  # fixed preview rows limit
 
 
 st.sidebar.markdown("<hr style='margin:6px 0;border:none;border-top:1px solid #eee'>", unsafe_allow_html=True)
-doi_input = st.sidebar.text_input("Enter DOI", label_visibility="collapsed")
+# Label for DOI (matches the uploader label style)
+st.sidebar.write("Enter DOI")
+doi_input = st.sidebar.text_input("", placeholder="Enter DOI", label_visibility="collapsed")
 fetch_doi = st.sidebar.button("Fetch metadata from DOI")
 
 st.sidebar.markdown("<hr style='margin:6px 0;border:none;border-top:1px solid #eee'>", unsafe_allow_html=True)
-search_query = st.sidebar.text_input("Search (Author or Title)", label_visibility="collapsed")
-search_kind = st.sidebar.radio("Search by", ["Title", "Author"], label_visibility="collapsed")
+# Label for search kind (matches the uploader label style)
+st.sidebar.write("Search by")
+search_query = st.sidebar.text_input("", placeholder="Search (Author or Title)", label_visibility="collapsed")
+search_kind = st.sidebar.radio("", ["Title", "Author"], label_visibility="collapsed")
 
 if st.sidebar.button("Run search"):
     if not search_query.strip():
