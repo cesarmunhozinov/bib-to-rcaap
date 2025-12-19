@@ -30,8 +30,8 @@ write_authors = st.sidebar.checkbox("Sync Authors", value=True)
 write_events = st.sidebar.checkbox("Sync Events", value=True)
 
 st.sidebar.markdown("---")
-st.sidebar.header("DOI / Google Scholar")
-doi_input = st.sidebar.text_input("DOI or Google Scholar link")
+st.sidebar.header("DOI")
+doi_input = st.sidebar.text_input("Enter DOI")
 fetch_doi = st.sidebar.button("Fetch metadata from DOI")
 
 st.sidebar.markdown("---")
@@ -119,8 +119,8 @@ if doi_input and fetch_doi:
     doi = extract_doi(doi_input)
     if not doi:
         # If the user pasted a URL but we couldn't find a DOI inside it, show a helpful message
-        if re.search(r"https?://|^www\.|doi\.org|scholar\.google", doi_input, re.I):
-            st.sidebar.error("Could not find a DOI in that link. Please try pasting the DOI directly (e.g., 10.3390/joitmc7010070).")
+        if re.search(r"https?://|^www\.|doi\.org", doi_input, re.I):
+            st.sidebar.error("No DOI found. Please paste a DOI (e.g., 10.3390/joitmc7010070) or a DOI-based URL.")
         else:
             st.sidebar.error("No DOI detected in the input. Please paste a DOI like 10.3390/joitmc7010070.")
     else:
