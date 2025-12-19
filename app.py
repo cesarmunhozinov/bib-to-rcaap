@@ -186,8 +186,8 @@ if entries:
         st.subheader("Authors (preview)")
         st.table(authors[:preview_limit])
 
-    # RCAAP export (primary action): generate CSV and expose a download button
-    def generate_rcaap_csv(titles_list, authors_list) -> str:
+    # RCAAP export (primary action): generate CSV from the relational sheets if available (fallback to local parsed rows)
+    def generate_rcaap_csv(db: RCAAPDatabase | None, titles_list, authors_list) -> str:
         import csv
         import io
 
@@ -196,22 +196,91 @@ if entries:
         headers = ["dc.title", "dc.contributor.author", "dc.date.issued", "dc.publisher", "dc.identifier.doi"]
         writer.writerow(headers)
 
+        # Attempt to use the relational sheets if a DB was provided and connected
+        if db is not None:
+            try:
+                # Read relational sheets
+                try:
+                    title_rows = db._get_ws('Title').get_all_records()
+                except Exception:
+                    title_rows = []
+                try:
+                    venue_rows = db._get_ws('Venue').get_all_records()
+                except Exception:
+                    venue_rows = []
+                try:
+                    publisher_rows = db._get_ws('Publisher').get_all_records()
+                except Exception:
+                    publisher_rows = []
+                try:
+                    author_rows = db._get_ws('Authors').get_all_records()
+                except Exception:
+                    author_rows = []
+                try:
+                    author_title_rows = db._get_ws('Author-Title').get_all_records()
+                except Exception:
+                    author_title_rows = []
+
+                # build maps
+                pub_map = {p.get('ID Publisher'): p.get('Publisher Name') for p in publisher_rows}
+                venue_map = {v.get('ID Venue'): v for v in venue_rows}
+                author_map = {a.get('ID Author'): a.get('Author Name') for a in author_rows}
+
+                # group author-title by title
+                from collections import defaultdict
+
+                tt = defaultdict(list)
+                for at in author_title_rows:
+                    tt[at.get('ID Title', '')].append((int(at.get('Order') or 0), at.get('ID Author')))
+
+                for t in title_rows:
+                    id_title = t.get('ID Title')
+                    title_str = t.get('Title', '')
+                    year = t.get('Year', '')
+                    doi = t.get('DOI', '')
+                    pub_name = ''
+                    id_venue = t.get('ID Venue', '')
+                    if id_venue:
+                        v = venue_map.get(id_venue)
+                        if v:
+                            id_pub = v.get('ID Publisher')
+                            pub_name = pub_map.get(id_pub, '')
+                    auths = tt.get(id_title, [])
+                    auths_sorted = [author_map[a_id] for _, a_id in sorted(auths, key=lambda x: x[0])]
+                    authors_joined = '; '.join(auths_sorted)
+
+                    writer.writerow([title_str, authors_joined, year, pub_name, doi])
+
+                return output.getvalue()
+            except Exception:
+                # fallback to local
+                pass
+
+        # Fallback: use local parsed lists passed in
         for t in titles_list:
             key = t.get("key")
-            # find authors for this key, prefer normalized name
             auths = [a.get("name_normalized") or a.get("name") for a in authors_list if a.get("key") == key]
             authors_joined = "; ".join(auths)
-            row = [
+            writer.writerow([
                 t.get("title", ""),
                 authors_joined,
                 t.get("year", ""),
                 t.get("publisher", "") or "",
                 t.get("doi", ""),
-            ]
-            writer.writerow(row)
+            ])
         return output.getvalue()
 
-    csv_data = generate_rcaap_csv(titles, authors)
+    # Try to create a DB connection and prefer relational export if possible
+    try:
+        try:
+            creds_info = st.secrets.get("gcp_service_account")
+        except Exception:
+            creds_info = None
+        db_for_export = RCAAPDatabase(creds_info=creds_info)
+    except Exception:
+        db_for_export = None
+
+    csv_data = generate_rcaap_csv(db_for_export, titles, authors)
 
     # Primary: RCAAP export (download)
     st.download_button(
@@ -230,14 +299,141 @@ if entries:
             except Exception:
                 creds_info = None
             db = RCAAPDatabase(creds_info=creds_info)
-            # Always sync all available data by default
+
+            # Ensure relational sheets and headers exist
+            def _ensure_sheet_and_header(title: str, headers: list[str]):
+                try:
+                    ws = db._get_ws(title)
+                except Exception:
+                    # create worksheet if missing
+                    db.sheet.add_worksheet(title=title, rows=100, cols=20)
+                    db._worksheets = {ws.title: ws for ws in db.sheet.worksheets()}
+                    ws = db._get_ws(title)
+                db._ensure_header(ws, headers)
+
+            # Desired schema
+            _ensure_sheet_and_header('Publisher', ['ID Publisher', 'Publisher Name'])
+            _ensure_sheet_and_header('Venue', ['ID Venue', 'Venue Name', 'ID Publisher'])
+            _ensure_sheet_and_header('Title', ['ID Title', 'Title', 'Year', 'ID Venue', 'DOI', 'URL', 'Abstract', 'Type', 'Language', 'Keywords'])
+            _ensure_sheet_and_header('Authors', ['ID Author', 'Author Name', 'ORCID', 'Affiliation'])
+            _ensure_sheet_and_header('Author-Title', ['ID Author', 'ID Title', 'Order'])
+
+            # helper getters / creators that operate on the sheet data
+            def _next_id(existing_ids: list[str], prefix: str) -> str:
+                nums = [int(s.lstrip(prefix)) for s in existing_ids if s.startswith(prefix) and s.lstrip(prefix).isdigit()]
+                maxn = max(nums) if nums else 0
+                return f"{prefix}{(maxn+1):03d}"
+
+            def get_or_create_publisher(name: str) -> str:
+                name = (name or "").strip()
+                ws = db._get_ws('Publisher')
+                rows = ws.get_all_records()
+                for r in rows:
+                    if r.get('Publisher Name', '').strip() == name:
+                        return r.get('ID Publisher')
+                # create new
+                existing_ids = [r.get('ID Publisher', '') for r in rows]
+                nid = _next_id(existing_ids, 'P')
+                db._append_dicts('Publisher', [{'ID Publisher': nid, 'Publisher Name': name}])
+                return nid
+
+            def get_or_create_venue(name: str, id_publisher: str) -> str:
+                name = (name or "").strip()
+                ws = db._get_ws('Venue')
+                rows = ws.get_all_records()
+                for r in rows:
+                    if r.get('Venue Name', '').strip() == name:
+                        # ensure publisher link
+                        if r.get('ID Publisher') != id_publisher:
+                            r['ID Publisher'] = id_publisher
+                        return r.get('ID Venue')
+                existing_ids = [r.get('ID Venue', '') for r in rows]
+                nid = _next_id(existing_ids, 'V')
+                db._append_dicts('Venue', [{'ID Venue': nid, 'Venue Name': name, 'ID Publisher': id_publisher}])
+                return nid
+
+            def get_or_create_author(name: str, orcid: str = '', affiliation: str = '') -> str:
+                name = (name or "").strip()
+                ws = db._get_ws('Authors')
+                rows = ws.get_all_records()
+                for r in rows:
+                    if r.get('Author Name', '').strip() == name:
+                        # update missing info
+                        if orcid and not r.get('ORCID'):
+                            r['ORCID'] = orcid
+                        if affiliation and not r.get('Affiliation'):
+                            r['Affiliation'] = affiliation
+                        return r.get('ID Author')
+                existing_ids = [r.get('ID Author', '') for r in rows]
+                nid = _next_id(existing_ids, 'A')
+                db._append_dicts('Authors', [{'ID Author': nid, 'Author Name': name, 'ORCID': orcid or '', 'Affiliation': affiliation or ''}])
+                return nid
+
+            def create_or_get_title_id(title_row: dict) -> str:
+                # Prefer matching by DOI if present, else by Title text
+                ws = db._get_ws('Title')
+                rows = ws.get_all_records()
+                doi = (title_row.get('doi') or '').strip()
+                for r in rows:
+                    if doi and r.get('DOI', '').strip().lower() == doi.lower():
+                        return r.get('ID Title')
+                # Not found -> create
+                existing_ids = [r.get('ID Title', '') for r in rows]
+                nid = _next_id(existing_ids, 'T')
+                db._append_dicts('Title', [{
+                    'ID Title': nid,
+                    'Title': title_row.get('title', ''),
+                    'Year': title_row.get('year', ''),
+                    'ID Venue': title_row.get('id_venue', ''),
+                    'DOI': title_row.get('doi', ''),
+                    'URL': title_row.get('url', ''),
+                    'Abstract': title_row.get('abstract', ''),
+                    'Type': title_row.get('type', ''),
+                    'Language': title_row.get('language', ''),
+                    'Keywords': title_row.get('keywords', ''),
+                }])
+                return nid
+
+            def ensure_author_title_link(id_author: str, id_title: str, order: int) -> None:
+                ws = db._get_ws('Author-Title')
+                rows = ws.get_all_records()
+                for r in rows:
+                    if r.get('ID Author') == id_author and r.get('ID Title') == id_title:
+                        # update order
+                        if int(r.get('Order') or 0) != order:
+                            r['Order'] = str(order)
+                        return
+                db._append_dicts('Author-Title', [{'ID Author': id_author, 'ID Title': id_title, 'Order': str(order)}])
+
+            # Build relational rows from current entries
+            # Use entries parsed earlier: titles (entries_to_titles) and authors (entries_to_authors)
+            # Iterate through titles and persist relationally
             if titles:
-                db.write_titles(titles)
-            if authors:
-                db.write_authors(authors)
-            if events:
-                db.write_events(events)
-            db.write_log(f"Streamlit sync: {uploaded.name if uploaded is not None else doi_input} (synced: titles, authors, events)")
+                # first, make sure to operate on live snapshots so that reads reflect writes
+                for t in titles:
+                    # publisher
+                    pub_name = t.get('publisher', '')
+                    id_pub = get_or_create_publisher(pub_name) if pub_name else ''
+                    # venue — use journal field as venue
+                    venue_name = t.get('journal', '')
+                    id_venue = get_or_create_venue(venue_name, id_pub) if venue_name else ''
+                    # prepare title row with id_venue
+                    trow = t.copy()
+                    trow['id_venue'] = id_venue
+                    id_title = create_or_get_title_id(trow)
+
+                    # authors for this title
+                    if authors:
+                        auths_for = [a for a in authors if a.get('key') == t.get('key')]
+                        for a in sorted(auths_for, key=lambda x: int(x.get('order', 0))):
+                            name = a.get('name')
+                            orcid = a.get('orcid', '')
+                            affiliation = a.get('affiliation', '')
+                            id_author = get_or_create_author(name, orcid, affiliation)
+                            ensure_author_title_link(id_author, id_title, int(a.get('order', 0)))
+
+            # After successful write
+            db.write_log(f"Streamlit sync: {uploaded.name if uploaded is not None else doi_input} (synced relational schema)")
             st.success("Sync complete")
         except Exception as e:
             st.error(f"Sync failed: {e}")
