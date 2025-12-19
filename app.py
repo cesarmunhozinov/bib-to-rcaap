@@ -261,7 +261,8 @@ else:
     creds_source = "No credentials found (set st.secrets['gcp_service_account'] on Streamlit Cloud or provide credentials.json locally)"
 
 if "Streamlit secrets" in creds_source:
-    st.success(f"Auth: {creds_source}")
+    # intentionally do not display a success message to keep the UI clean
+    pass
 elif "Local file" in creds_source:
     st.info(f"Auth: {creds_source}")
 else:
