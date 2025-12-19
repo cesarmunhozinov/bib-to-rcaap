@@ -23,11 +23,8 @@ st.sidebar.header("Actions")
 
 uploaded = st.sidebar.file_uploader("Upload a .bib file", type=["bib"])
 
-preview_limit = st.sidebar.number_input("Preview rows", min_value=1, max_value=500, value=50)
+preview_limit = 50  # fixed preview rows limit
 
-write_titles = st.sidebar.checkbox("Sync Titles", value=True)
-write_authors = st.sidebar.checkbox("Sync Authors", value=True)
-write_events = st.sidebar.checkbox("Sync Events", value=True)
 
 st.sidebar.markdown("---")
 st.sidebar.header("DOI")
@@ -219,13 +216,14 @@ if entries:
             except Exception:
                 creds_info = None
             db = RCAAPDatabase(creds_info=creds_info)
-            if write_titles and titles:
+            # Always sync all available data by default
+            if titles:
                 db.write_titles(titles)
-            if write_authors and authors:
+            if authors:
                 db.write_authors(authors)
-            if write_events and events:
+            if events:
                 db.write_events(events)
-            db.write_log(f"Streamlit sync: {uploaded.name if uploaded is not None else doi_input} (titles={write_titles}, authors={write_authors}, events={write_events})")
+            db.write_log(f"Streamlit sync: {uploaded.name if uploaded is not None else doi_input} (synced: titles, authors, events)")
             st.success("Sync complete")
         except Exception as e:
             st.error(f"Sync failed: {e}")
