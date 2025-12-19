@@ -1,5 +1,7 @@
 # RCAAP Converter (bib-to-rcaap)
 
+[![Project](https://img.shields.io/badge/project-RCAAP%20Converter-blue)](https://github.com/cesarmunhozinov/bib-to-rcaap)
+
 The RCAAP Converter converts BibTeX metadata into rows written to a Google Spreadsheet formatted for RCAAP. It supports Authors, Titles, Events and Logs tabs.
 
 ## Setup ✅
