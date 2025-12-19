@@ -19,18 +19,36 @@ logger = logging.getLogger("bib-to-rcaap-app")
 st.set_page_config(page_title="Bib-to-RCAAP", layout="wide")
 st.title("BibTeX → RCAAP Google Sheets")
 
+# Compact sidebar styling: reduce vertical spacing, tighter dividers, and ensure elements are comfortably laid out
+st.markdown(
+    """
+    <style>
+    /* Target the sidebar container */
+    [data-testid="stSidebar"] .block-container { padding: 6px 10px; }
+    /* Tighter spacing between widgets */
+    [data-testid="stSidebar"] .stButton, [data-testid="stSidebar"] .stTextInput, [data-testid="stSidebar"] .stFileUploader, [data-testid="stSidebar"] .stRadio { margin-bottom: 6px; }
+    /* Compact horizontal rule for sidebar dividers */
+    [data-testid="stSidebar"] hr { margin: 6px 0; border: none; border-top: 1px solid #eee; }
+    /* Make sidebar buttons full width (and not cramped) */
+    [data-testid="stSidebar"] .stButton>button { width:100%; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 uploaded = st.sidebar.file_uploader("Upload a .bib file", type=["bib"])
 
 preview_limit = 50  # fixed preview rows limit
 
 
-st.sidebar.markdown("---")
-doi_input = st.sidebar.text_input("Enter DOI")
+st.sidebar.markdown("<hr style='margin:6px 0;border:none;border-top:1px solid #eee'>", unsafe_allow_html=True)
+doi_input = st.sidebar.text_input("Enter DOI", label_visibility="collapsed")
 fetch_doi = st.sidebar.button("Fetch metadata from DOI")
 
-st.sidebar.markdown("---")
-search_query = st.sidebar.text_input("Search (Author or Title)")
-search_kind = st.sidebar.radio("Search by", ["Title", "Author"])
+st.sidebar.markdown("<hr style='margin:6px 0;border:none;border-top:1px solid #eee'>", unsafe_allow_html=True)
+search_query = st.sidebar.text_input("Search (Author or Title)", label_visibility="collapsed")
+search_kind = st.sidebar.radio("Search by", ["Title", "Author"], label_visibility="collapsed")
 
 if st.sidebar.button("Run search"):
     if not search_query.strip():
