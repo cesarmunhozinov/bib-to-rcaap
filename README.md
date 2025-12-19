@@ -34,23 +34,23 @@ You can set these in a `.env` file or export them in your shell for local runs.
 Dry run (parses file and prints what would be written):
 
 ```bash
-python parse_bib.py path/to/file.bib --dry-run --write-authors --write-titles --write-events
+python parse_bib.py path/to/file.bib --dry-run --write-authors
 ```
 
 To perform actual writes:
 
 ```bash
-python parse_bib.py path/to/file.bib --write-authors --write-titles --write-events
+python parse_bib.py path/to/file.bib --write-authors
 ```
 
-The CLI will always append a log entry to the `Logs` sheet recording the action.
+The CLI no longer appends to a `Logs` sheet; use the relational sync helpers to write to the five-table schema.
 
 ## Mapping details ✍️
 
 - Authors: includes `name` (original string), `name_normalized` ("Given Family"), `given_name`, `family_name`, `affiliation`, `key`, `order`, `orcid`.
 - Titles: includes `key`, `title`, `year`, `journal`, `doi`, `url`, `abstract`, `pages`, `volume`, `number`, `publisher`, `keywords`, `language`.
 - Event mapping has been deprecated in favor of a relational `Venue` and `Title` model; venue/journal information is stored on the `Venue` sheet and linked from `Title`.
-- Logs: timestamped entries with `level` and `message`.
+- Logs: (removed — sync messages are recorded in local logs or CI logs; no Logs sheet is maintained)
 
 ## Tests ✅
 

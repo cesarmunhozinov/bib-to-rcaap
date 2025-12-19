@@ -41,9 +41,7 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
             for a in sorted(auths_for, key=lambda x: int(x.get("order", 0))):
                 id_author = db.get_or_create_author(a.get("name"), a.get("orcid", ""), a.get("affiliation", ""))
                 db.add_author_title(id_author, id_title, int(a.get("order", 0)))
-        # option: write log if present
-        if hasattr(db, "write_log") and source:
-            db.write_log(f"Sync: {source}")
+        # Return for in-memory DB (no external Logs sheet writes)
         return
 
     # Otherwise assume RCAAPDatabase and operate directly on worksheets
@@ -170,5 +168,4 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
     import logging
 
     logger = logging.getLogger("rcaap-relational-sync")
-    if source:
-        logger.info(f"Sync completed: {source}")
+    logger.info("Sync Complete.")

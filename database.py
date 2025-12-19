@@ -1,9 +1,10 @@
 """database.py
-Utilities to connect to a Google Spreadsheet (RCAAP format) and write to 4 tabs:
+Utilities to connect to a Google Spreadsheet (RCAAP format) and write to the 5-table relational schema:
+- Publisher
+- Venue
+- Title
 - Authors
-- Titles
-- Events
-- Logs
+- Author-Title
 
 Usage:
 - Place your service account JSON at `credentials.json` (ignored by .gitignore)
@@ -12,10 +13,7 @@ Usage:
 Example:
 from database import RCAAPDatabase
 db = RCAAPDatabase()  # will use env or defaults
-# db.write_authors([{'Name': 'Alice', 'Affiliation': 'X Uni'}])
-# db.write_titles([...])
-# db.write_events([...])
-# db.write_log('Test entry')
+# Use the relational sync helpers to write Publisher, Venue, Title, Authors, and Author-Title
 """
 
 from __future__ import annotations
@@ -41,7 +39,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-REQUIRED_TABS = ["Authors", "Titles", "Events", "Logs"]
+REQUIRED_TABS = ["Publisher", "Venue", "Title", "Authors", "Author-Title"]
 
 
 class RCAAPDatabase:
@@ -143,27 +141,44 @@ class RCAAPDatabase:
         ws.append_rows(to_append, value_input_option="USER_ENTERED")
 
     def write_authors(self, rows: List[Dict[str, Any]]) -> None:
-        """Write author entries to `Authors` tab. Each row is a dict."""
-        self._append_dicts("Authors", rows)
+        """Write author entries to `Authors` tab.
 
-    def write_titles(self, rows: List[Dict[str, Any]]) -> None:
-        """Write title entries to `Titles` tab. Each row is a dict."""
-        self._append_dicts("Titles", rows)
+        This enforces an exact 4-column schema: 'ID Author', 'Author Name', 'ORCID', 'Affiliation'.
+        Any incoming rows will be mapped to these keys (e.g., 'name' or 'name_normalized' -> 'Author Name')
+        to avoid appending legacy/extra columns to the sheet.
+        """
+        if not rows:
+            return
+        ws = self._get_ws("Authors")
+        headers = ["ID Author", "Author Name", "ORCID", "Affiliation"]
+        # Replace header exactly if it differs to enforce schema
+        existing = ws.get_all_values()
+        if not existing or not any(existing):
+            ws.insert_row(headers, index=1)
+        else:
+            current_header = existing[0]
+            if current_header != headers:
+                try:
+                    ws.delete_rows(1)
+                except Exception:
+                    pass
+                ws.insert_row(headers, index=1)
 
-    def write_events(self, rows: List[Dict[str, Any]]) -> None:
-        """Write event entries to `Events` tab. Each row is a dict."""
-        self._append_dicts("Events", rows)
+        to_append = []
+        for r in rows:
+            author_name = r.get('Author Name') or r.get('name_normalized') or r.get('name') or ''
+            row = [r.get('ID Author', ''), author_name, r.get('ORCID', ''), r.get('Affiliation', '')]
+            to_append.append(row)
 
-    def write_log(self, message: str, level: str = "INFO") -> None:
-        """Append a log line to `Logs` with timestamp, level, and message."""
-        ws = self._get_ws("Logs")
-        timestamp = datetime.utcnow().isoformat()
-        # Ensure header
-        self._ensure_header(ws, ["timestamp", "level", "message"])
-        ws.append_row([timestamp, level, message], value_input_option="USER_ENTERED")
+        ws.append_rows(to_append, value_input_option="USER_ENTERED")
+
+    # Legacy single-tab writer helpers (Titles, Events, Logs) removed to enforce the
+    # normalized 5-table relational schema. Use `relational_sync.sync_entries` to
+    # synchronise data to 'Publisher', 'Venue', 'Title', 'Authors', and 'Author-Title'.
+
 
 
 if __name__ == "__main__":
     # Basic friendly test (won't run automatically on import)
     print("database.py loaded. Instantiate RCAAPDatabase and call methods to write data.")
-    print("Example:\n  from database import RCAAPDatabase\n  db = RCAAPDatabase()\n  db.write_log('Hello world')")
+    print("Example:\n  from database import RCAAPDatabase\n  db = RCAAPDatabase()\n  # Use relational sync helpers to write Publisher/Venue/Title/Authors/Author-Title")

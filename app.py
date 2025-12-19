@@ -416,7 +416,7 @@ if entries:
             # Build relational rows by calling the sync helper
             from relational_sync import sync_entries
             sync_entries(db, titles, authors, source=(uploaded.name if uploaded is not None else doi_input))
-            st.success('Sync Complete: Publisher, Venue, Title, Authors, and Author-Title updated.')
+            st.success('Sync Complete.')
         except Exception as e:
             st.error(f"Sync failed: {e}")
 else:
