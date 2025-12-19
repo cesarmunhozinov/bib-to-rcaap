@@ -38,9 +38,18 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
             )
             # authors associated with this title
             auths_for = [a for a in authors if a.get("key") == t.get("key")]
-            for a in sorted(auths_for, key=lambda x: int(x.get("order", 0))):
+            def _parse_order_local(val) -> int:
+            try:
+                return int(val)
+            except Exception:
+                try:
+                    return int(float(val))
+                except Exception:
+                    return 0
+
+        for a in sorted(auths_for, key=lambda x: _parse_order_local(x.get("order"))):
                 id_author = db.get_or_create_author(a.get("name"), a.get("orcid", ""), a.get("affiliation", ""))
-                db.add_author_title(id_author, id_title, int(a.get("order", 0)))
+                db.add_author_title(id_author, id_title, _parse_order_local(a.get("order")))
         # Return for in-memory DB (no external Logs sheet writes)
         return
 
@@ -138,7 +147,14 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
         rows = ws.get_all_records()
         for r in rows:
             if r.get('ID Author') == id_author and r.get('ID Title') == id_title:
-                if int(r.get('Order') or 0) != order:
+                try:
+                    current_order = int(r.get('Order') or 0)
+                except Exception:
+                    try:
+                        current_order = int(float(r.get('Order')))
+                    except Exception:
+                        current_order = 0
+                if current_order != order:
                     r['Order'] = str(order)
                 return
         db._append_dicts('Author-Title', [{'ID Author': id_author, 'ID Title': id_title, 'Order': str(order)}])

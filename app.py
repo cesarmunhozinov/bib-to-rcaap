@@ -57,6 +57,16 @@ def _format_initial(given: str) -> str:
     return (given.strip()[0] + '.') if given and given.strip() else ''
 
 
+def _parse_order(val) -> int:
+    try:
+        return int(val)
+    except Exception:
+        try:
+            return int(float(val))
+        except Exception:
+            return 0
+
+
 def _format_author_name_from_parts(given: str, family: str) -> str:
     if not family and not given:
         return ''
@@ -129,7 +139,7 @@ def _assemble_preview_row(title_row: dict, db: RCAAPDatabase | None = None, pars
             authors_rows = db._get_ws('Authors').get_all_records()
             title_id = title_row.get('ID Title') or ''
             links = [r for r in at_rows if r.get('ID Title') == title_id]
-            ordered = sorted(links, key=lambda x: int(x.get('Order') or 0))
+            ordered = sorted(links, key=lambda x: _parse_order(x.get('Order')))
             id_to_author = {r.get('ID Author'): r.get('Author Name') for r in authors_rows}
             formatted = []
             for l in ordered:
