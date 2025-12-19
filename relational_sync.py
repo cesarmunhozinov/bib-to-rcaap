@@ -50,7 +50,20 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
     # Helper functions using db._get_ws and db._append_dicts
     def _ensure_sheet_and_header(title: str, headers: List[str]):
         ws = db._get_ws(title)
-        db._ensure_header(ws, headers)
+        # If header differs from desired, replace it to enforce exact schema (avoid legacy extra columns)
+        existing = ws.get_all_values()
+        if not existing or not any(existing):
+            ws.insert_row(headers, index=1)
+        else:
+            current_header = existing[0]
+            if current_header != headers:
+                # Replace header row exactly
+                try:
+                    ws.delete_rows(1)
+                except Exception:
+                    pass
+                ws.insert_row(headers, index=1)
+
 
     def _next_id(existing_ids: List[str], prefix: str) -> str:
         nums = [int(s.lstrip(prefix)) for s in existing_ids if s and s.startswith(prefix) and s.lstrip(prefix).isdigit()]
@@ -153,5 +166,9 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
             id_author = get_or_create_author(a.get('name'), a.get('orcid', ''), a.get('affiliation', ''))
             ensure_author_title_link(id_author, id_title, int(a.get('order', 0)))
 
-    if hasattr(db, 'write_log') and source:
-        db.write_log(f"Sync: {source}")
+    # Log locally only; do not write to a Logs sheet to keep to the 5-table relational schema
+    import logging
+
+    logger = logging.getLogger("rcaap-relational-sync")
+    if source:
+        logger.info(f"Sync completed: {source}")

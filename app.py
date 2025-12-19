@@ -10,7 +10,7 @@ import bibtexparser
 from bibtexparser.bparser import BibTexParser
 from bibtexparser.customization import homogenize_latex_encoding
 
-from bibtex_parser import entries_to_titles, entries_to_authors, entries_to_events
+from bibtex_parser import entries_to_titles, entries_to_authors
 from database import RCAAPDatabase
 
 logging.basicConfig(level=logging.INFO)
@@ -64,15 +64,25 @@ if st.sidebar.button("Run search"):
 
             db = RCAAPDatabase(creds_info=creds_info)
             # cached through the class
-            titles = db._get_ws("Titles").get_all_records()
+            # Use the relational 'Title' sheet and 'Authors' sheet
+            titles = db._get_ws("Title").get_all_records()
             authors = db._get_ws("Authors").get_all_records()
 
             if search_kind == "Title":
-                results = [t for t in titles if search_query.lower() in str(t.get("title", "")).lower()]
+                # title sheet uses 'Title' header; fall back to lowercase 'title' if present
+                results = [t for t in titles if search_query.lower() in str(t.get("Title", "") or t.get("title", "")).lower()]
             else:
-                matches = [a for a in authors if search_query.lower() in str(a.get("name", "")).lower() or search_query.lower() in str(a.get("name_normalized", "")).lower()]
-                keys = {m.get("key") for m in matches}
-                results = [t for t in titles if t.get("key") in keys]
+                # authors sheet uses 'Author Name'
+                matches = [a for a in authors if search_query.lower() in str(a.get("Author Name", "")).lower()]
+                keys = {m.get("ID Author") for m in matches}
+                # For author search, return titles that are linked to matching authors via the Author-Title junction
+                # Load junction table and find title IDs
+                try:
+                    at_rows = db._get_ws('Author-Title').get_all_records()
+                    title_ids = {r.get('ID Title') for r in at_rows if r.get('ID Author') in keys}
+                    results = [t for t in titles if t.get('ID Title') in title_ids]
+                except Exception:
+                    results = []
 
             st.sidebar.success(f"Found {len(results)} results")
             st.subheader("Search results")
@@ -172,11 +182,9 @@ if doi_input and fetch_doi:
 # If we have entries (either from upload or DOI fetch), map them
 titles = []
 authors = []
-events = []
 if entries:
     titles = entries_to_titles(entries)
     authors = entries_to_authors(entries)
-    events = entries_to_events(entries)
 
     col1, col2 = st.columns(2)
     with col1:
@@ -408,7 +416,7 @@ if entries:
             # Build relational rows by calling the sync helper
             from relational_sync import sync_entries
             sync_entries(db, titles, authors, source=(uploaded.name if uploaded is not None else doi_input))
-            st.success("Sync complete")
+            st.success('Sync Complete: Publisher, Venue, Title, Authors, and Author-Title updated.')
         except Exception as e:
             st.error(f"Sync failed: {e}")
 else:

@@ -41,6 +41,25 @@ def test_publisher_venue_title_author_linking():
     assert row['dc.publisher'] == 'ACME Publishing'
 
 
+def test_authors_sheet_columns_and_junction():
+    db = InMemoryRelationalDB()
+    # Add authors via sync helper simulation
+    a1 = db.get_or_create_author('Alice', orcid='0000-0001-2345-6789', affiliation='Uni')
+    a2 = db.get_or_create_author('Bob', affiliation='Inst')
+    # Authors sheet should only have the exact 4 columns
+    for a in db.authors:
+        assert set(a.keys()) == {'ID Author', 'Author Name', 'ORCID', 'Affiliation'}
+
+    # Create a title and link authors
+    vid = db.get_or_create_venue('V', db.get_or_create_publisher('P'))
+    tid = db.create_title('T1', '2025', id_venue=vid)
+    db.add_author_title(a1, tid, 1)
+    db.add_author_title(a2, tid, 2)
+    # Junction table rows should have ID Author, ID Title, Order
+    for at in db.author_titles:
+        assert set(at.keys()) == {'ID Author', 'ID Title', 'Order'}
+
+
 def test_author_deduplication_and_order_update():
     db = InMemoryRelationalDB()
     pid = db.get_or_create_publisher('P')

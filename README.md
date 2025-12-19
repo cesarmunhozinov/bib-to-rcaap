@@ -2,7 +2,7 @@
 
 [![Project](https://img.shields.io/badge/project-RCAAP%20Converter-blue)](https://github.com/cesarmunhozinov/bib-to-rcaap)
 
-The RCAAP Converter converts BibTeX metadata into rows written to a Google Spreadsheet formatted for RCAAP. It supports Authors, Titles, Events and Logs tabs.
+The RCAAP Converter converts BibTeX metadata into rows written to a Google Spreadsheet formatted for RCAAP. It uses a relational layout with sheets: Publisher, Venue, Title, Authors, and Author-Title.
 
 ## Setup ✅
 
@@ -49,7 +49,7 @@ The CLI will always append a log entry to the `Logs` sheet recording the action.
 
 - Authors: includes `name` (original string), `name_normalized` ("Given Family"), `given_name`, `family_name`, `affiliation`, `key`, `order`, `orcid`.
 - Titles: includes `key`, `title`, `year`, `journal`, `doi`, `url`, `abstract`, `pages`, `volume`, `number`, `publisher`, `keywords`, `language`.
-- Events: attempts to map `booktitle` / `event` / `journal` and sets `date`, `venue`, `year`.
+- Event mapping has been deprecated in favor of a relational `Venue` and `Title` model; venue/journal information is stored on the `Venue` sheet and linked from `Title`.
 - Logs: timestamped entries with `level` and `message`.
 
 ## Tests ✅
