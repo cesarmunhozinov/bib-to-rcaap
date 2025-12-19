@@ -51,6 +51,111 @@ st.sidebar.markdown("<hr style='margin:6px 0;border:none;border-top:1px solid #e
 search_query = st.sidebar.text_input("Search by", placeholder="Search (Author or Title)", label_visibility="collapsed")
 search_kind = st.sidebar.radio("Search by", ["Title", "Author"], label_visibility="collapsed")
 
+# --- Preview rendering helpers (Google Scholar style) ---
+
+def _format_initial(given: str) -> str:
+    return (given.strip()[0] + '.') if given and given.strip() else ''
+
+
+def _format_author_name_from_parts(given: str, family: str) -> str:
+    if not family and not given:
+        return ''
+    if not family:
+        return given
+    initial = _format_initial(given)
+    return f"{family}, {initial}" if initial else family
+
+
+def _authors_for_db_title(title_row: dict, db: RCAAPDatabase) -> str:
+    try:
+        at_rows = db._get_ws('Author-Title').get_all_records()
+        authors_rows = db._get_ws('Authors').get_all_records()
+    except Exception:
+        return ''
+    title_id = title_row.get('ID Title')
+    links = [r for r in at_rows if r.get('ID Title') == title_id]
+    ordered = sorted(links, key=lambda x: int(x.get('Order') or 0))
+    id_to_author = {r.get('ID Author'): r.get('Author Name') for r in authors_rows}
+    formatted = []
+    for l in ordered:
+        aid = l.get('ID Author')
+        name = id_to_author.get(aid, '')
+        if not name:
+            continue
+        parts = name.strip().split()
+        if len(parts) == 1:
+            given, family = parts[0], ''
+        else:
+            given, family = ' '.join(parts[:-1]), parts[-1]
+        formatted.append(_format_author_name_from_parts(given, family))
+    return '; '.join([f for f in formatted if f])
+
+
+def _render_article_preview(title_row: dict, db: RCAAPDatabase | None = None, parsed_authors: list[dict] | None = None):
+    # Title + link
+    title_text = title_row.get('Title') or title_row.get('title') or ''
+    doi = (title_row.get('DOI') or title_row.get('doi') or '').strip()
+    url = title_row.get('URL') or title_row.get('url') or ''
+    link = ''
+    if doi:
+        link = f"https://doi.org/{doi}"
+    elif url:
+        link = url
+
+    # Escape basic markdown-sensitive characters
+    esc_title = title_text.replace('[', '\\[').replace(']', '\\]')
+
+    if link:
+        st.markdown(f"### **[{esc_title}]({link})**")
+    else:
+        st.markdown(f"### **{esc_title}**")
+
+    # Author byline
+    if db is not None and title_row.get('ID Title'):
+        authors_line = _authors_for_db_title(title_row, db)
+    else:
+        # fallback: use parsed_authors if provided
+        authors_line = ''
+        if parsed_authors is not None:
+            key = title_row.get('key')
+            auths = [a for a in parsed_authors if a.get('key') == key]
+            auths_sorted = sorted(auths, key=lambda x: int(x.get('order', 0)))
+            formatted = []
+            for a in auths_sorted:
+                given = a.get('given_name') or ''
+                family = a.get('family_name') or ''
+                if not (given or family):
+                    name_norm = a.get('name_normalized') or a.get('name') or ''
+                    parts = name_norm.strip().split()
+                    if len(parts) == 1:
+                        given, family = parts[0], ''
+                    else:
+                        given, family = ' '.join(parts[:-1]), parts[-1]
+                formatted.append(_format_author_name_from_parts(given, family))
+            authors_line = '; '.join([f for f in formatted if f])
+
+    if authors_line:
+        st.markdown(f"<span style='color: #006621;'>{authors_line}</span>", unsafe_allow_html=True)
+
+    # Venue & Year
+    venue_name = ''
+    year = title_row.get('Year') or title_row.get('year') or ''
+    if db is not None and title_row.get('ID Venue'):
+        try:
+            v = db._get_ws('Venue').get_all_records()
+            vm = next((r for r in v if r.get('ID Venue') == title_row.get('ID Venue')), None)
+            venue_name = vm.get('Venue Name') if vm else ''
+        except Exception:
+            venue_name = ''
+    else:
+        venue_name = title_row.get('journal') or title_row.get('Venue') or ''
+
+    if venue_name or year:
+        st.markdown(f"{venue_name} {str(year)}")
+
+    st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
+
+
 if st.sidebar.button("Run search"):
     if not search_query.strip():
         st.sidebar.warning("Enter a search term first.")
@@ -86,7 +191,8 @@ if st.sidebar.button("Run search"):
 
             st.sidebar.success(f"Found {len(results)} results")
             st.subheader("Search results")
-            st.table(results[:preview_limit])
+            for t in results[:preview_limit]:
+                _render_article_preview(t, db=db, parsed_authors=None)
         except Exception as e:
             st.sidebar.error(f"Search failed: {e}")
 
@@ -186,13 +292,108 @@ if entries:
     titles = entries_to_titles(entries)
     authors = entries_to_authors(entries)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Titles (preview)")
-        st.table(titles[:preview_limit])
-    with col2:
-        st.subheader("Authors (preview)")
-        st.table(authors[:preview_limit])
+    # Render a Google Scholar-style preview for parsed entries
+    def _format_initial(given: str) -> str:
+        return (given.strip()[0] + '.') if given and given.strip() else ''
+
+    def _format_author_name_from_parts(given: str, family: str) -> str:
+        if not family and not given:
+            return ''
+        if not family:
+            return given
+        initial = _format_initial(given)
+        return f"{family}, {initial}" if initial else family
+
+    def _authors_for_local_title(title_row: dict, parsed_authors: list[dict]) -> str:
+        # parsed_authors have keys: given_name, family_name, name_normalized, name, key, order
+        key = title_row.get('key')
+        auths = [a for a in parsed_authors if a.get('key') == key]
+        auths_sorted = sorted(auths, key=lambda x: int(x.get('order', 0)))
+        formatted = []
+        for a in auths_sorted:
+            given = a.get('given_name') or ''
+            family = a.get('family_name') or ''
+            if not (given or family):
+                # fallback to normalized/full name and split
+                name_norm = a.get('name_normalized') or a.get('name') or ''
+                parts = name_norm.strip().split()
+                if len(parts) == 1:
+                    given, family = parts[0], ''
+                else:
+                    given, family = ' '.join(parts[:-1]), parts[-1]
+            formatted.append(_format_author_name_from_parts(given, family))
+        return '; '.join([f for f in formatted if f])
+
+    def _authors_for_db_title(title_row: dict, db: RCAAPDatabase) -> str:
+        try:
+            at_rows = db._get_ws('Author-Title').get_all_records()
+            authors_rows = db._get_ws('Authors').get_all_records()
+        except Exception:
+            return ''
+        title_id = title_row.get('ID Title')
+        links = [r for r in at_rows if r.get('ID Title') == title_id]
+        ordered = sorted(links, key=lambda x: int(x.get('Order') or 0))
+        id_to_author = {r.get('ID Author'): r.get('Author Name') for r in authors_rows}
+        formatted = []
+        for l in ordered:
+            aid = l.get('ID Author')
+            name = id_to_author.get(aid, '')
+            if not name:
+                continue
+            parts = name.strip().split()
+            if len(parts) == 1:
+                given, family = parts[0], ''
+            else:
+                given, family = ' '.join(parts[:-1]), parts[-1]
+            formatted.append(_format_author_name_from_parts(given, family))
+        return '; '.join([f for f in formatted if f])
+
+    def _render_article_preview(title_row: dict, db: RCAAPDatabase | None = None, parsed_authors: list[dict] | None = None):
+        # Title + link
+        title_text = title_row.get('Title') or title_row.get('title') or ''
+        doi = (title_row.get('DOI') or title_row.get('doi') or '').strip()
+        url = title_row.get('URL') or title_row.get('url') or ''
+        link = ''
+        if doi:
+            link = f"https://doi.org/{doi}"
+        elif url:
+            link = url
+
+        if link:
+            st.markdown(f"### **[{st.utils._escape_html(title_text)}]({link})**", unsafe_allow_html=True)
+        else:
+            st.markdown(f"### **{st.utils._escape_html(title_text)}**", unsafe_allow_html=True)
+
+        # Author byline
+        if db is not None and title_row.get('ID Title'):
+            authors_line = _authors_for_db_title(title_row, db)
+        else:
+            authors_line = _authors_for_local_title(title_row, parsed_authors or [])
+
+        if authors_line:
+            st.markdown(f"<span style='color: #006621;'>{st.utils._escape_html(authors_line)}</span>", unsafe_allow_html=True)
+
+        # Venue & Year
+        venue_name = ''
+        year = title_row.get('Year') or title_row.get('year') or ''
+        if db is not None and title_row.get('ID Venue'):
+            try:
+                v = db._get_ws('Venue').get_all_records()
+                vm = next((r for r in v if r.get('ID Venue') == title_row.get('ID Venue')), None)
+                venue_name = vm.get('Venue Name') if vm else ''
+            except Exception:
+                venue_name = ''
+        else:
+            venue_name = title_row.get('journal') or title_row.get('Venue') or ''
+
+        if venue_name or year:
+            st.markdown(f"{st.utils._escape_html(venue_name)} {st.utils._escape_html(str(year))}")
+
+        st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
+
+    # Render previews (limit)
+    for t in titles[:preview_limit]:
+        _render_article_preview(t, db=None, parsed_authors=authors)
 
     # RCAAP export (primary action): generate CSV from the relational sheets if available (fallback to local parsed rows)
     def generate_rcaap_csv(db: RCAAPDatabase | None, titles_list, authors_list) -> str:
