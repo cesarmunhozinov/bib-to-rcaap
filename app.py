@@ -19,20 +19,16 @@ logger = logging.getLogger("bib-to-rcaap-app")
 st.set_page_config(page_title="Bib-to-RCAAP", layout="wide")
 st.title("BibTeX → RCAAP Google Sheets")
 
-st.sidebar.header("Actions")
-
 uploaded = st.sidebar.file_uploader("Upload a .bib file", type=["bib"])
 
 preview_limit = 50  # fixed preview rows limit
 
 
 st.sidebar.markdown("---")
-st.sidebar.header("DOI")
 doi_input = st.sidebar.text_input("Enter DOI")
 fetch_doi = st.sidebar.button("Fetch metadata from DOI")
 
 st.sidebar.markdown("---")
-st.sidebar.header("Search sheet")
 search_query = st.sidebar.text_input("Search (Author or Title)")
 search_kind = st.sidebar.radio("Search by", ["Title", "Author"])
 
@@ -198,7 +194,6 @@ if entries:
 
     csv_data = generate_rcaap_csv(titles, authors)
 
-    st.subheader("Actions")
     # Primary: RCAAP export (download)
     st.download_button(
         "Download RCAAP Metadata",
