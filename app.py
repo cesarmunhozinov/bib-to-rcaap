@@ -198,6 +198,30 @@ def _assemble_preview_row(title_row: dict, db: RCAAPDatabase | None = None, pars
     }
 
 
+def _build_display_object_from_bib_entry(entry: dict) -> dict:
+    """Create a display object from a raw parsed BibTeX entry using exact BibTeX keys.
+
+    Returns a dict that matches fields consumed by `_render_article_preview`.
+    """
+    display_title = entry.get('title') or entry.get('Title') or 'Untitled'
+    display_authors = entry.get('author') or entry.get('Author') or 'Unknown'
+    display_venue = entry.get('journal') or entry.get('booktitle') or 'N/A'
+    display_year = entry.get('year') or entry.get('Year') or ''
+    display_doi = entry.get('doi') or entry.get('DOI') or ''
+    display_url = entry.get('url') or entry.get('URL') or ''
+
+    return {
+        'Title': display_title,
+        'Year': display_year,
+        'DOI': display_doi,
+        'URL': display_url,
+        'Venue Name': display_venue,
+        'authors_line': display_authors,
+        'ID Title': entry.get('ID') or entry.get('id') or entry.get('key'),
+        'ID Venue': None,
+    }
+
+
 def _render_article_preview(title_row: dict, db: RCAAPDatabase | None = None, parsed_authors: list[dict] | None = None):
     # Accept either a raw title row or a preassembled merged dict
     merged = title_row if ('Venue Name' in title_row or 'authors_line' in title_row) else _assemble_preview_row(title_row, db=db, parsed_authors=parsed_authors)
@@ -471,13 +495,18 @@ if entries:
         st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
 
     # Render previews (limit)
-    # Render previews with safety: each preview rendered inside a try/except to avoid a single bad row crashing the app
-    for t in titles[:preview_limit]:
+    # When raw parsed entries are available, prefer displaying them directly using their
+    # original BibTeX keys to avoid mismatch with sheet column names. Build a display object
+    # from each raw entry and render it. Wrap each render in try/except so a single bad row
+    # does not crash the app.
+    # Using top-level helper _build_display_object_from_bib_entry to construct display objects from raw entries.
+
+    for entry in (entries or [])[:preview_limit]:
         try:
-            merged = _assemble_preview_row(t, db=None, parsed_authors=authors)
+            merged = _build_display_object_from_bib_entry(entry)
             _render_article_preview(merged, db=None, parsed_authors=None)
         except Exception as e:
-            logger.exception("Failed to render preview for parsed title: %s", e)
+            logger.exception("Failed to render preview for a parsed entry: %s", e)
             st.warning(f"Preview unavailable for a parsed entry: {e}")
 
     # RCAAP export (primary action): generate CSV from the relational sheets if available (fallback to local parsed rows)
