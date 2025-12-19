@@ -74,12 +74,30 @@ from crossref.restful import Works
 
 
 def extract_doi(text: str) -> str | None:
+    """Extract a DOI from arbitrary text or a URL.
+
+    Tries several patterns:
+    - DOI in a doi.org URL (e.g. https://doi.org/10.1234/abc)
+    - DOI as a query parameter (?doi=10.xxx/...)
+    - Generic DOI pattern anywhere in the text
+    Returns the DOI without surrounding punctuation, or None if not found.
+    """
     if not text:
         return None
-    m = re.search(r"(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", text, re.I)
-    if m:
-        return m.group(1)
-    return None
+    text = text.strip()
+    # Try doi.org path
+    m = re.search(r"doi\.org/(?P<doi>10\.\d{4,9}/[^\s\"'<>]+)", text, re.I)
+    if not m:
+        # DOI in query param
+        m = re.search(r"[?&]doi=(?P<doi>10\.\d{4,9}/[^&\s]+)", text, re.I)
+    if not m:
+        # generic DOI anywhere
+        m = re.search(r"(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", text, re.I)
+    if not m:
+        return None
+    doi = m.group(1)
+    # strip trailing punctuation that commonly appears after DOIs in text
+    return doi.rstrip(").,;\"'")
 
 
 # Parse uploaded file and show preview
@@ -100,7 +118,11 @@ if uploaded is not None:
 if doi_input and fetch_doi:
     doi = extract_doi(doi_input)
     if not doi:
-        st.sidebar.error("No DOI detected in the input.")
+        # If the user pasted a URL but we couldn't find a DOI inside it, show a helpful message
+        if re.search(r"https?://|^www\.|doi\.org|scholar\.google", doi_input, re.I):
+            st.sidebar.error("Could not find a DOI in that link. Please try pasting the DOI directly (e.g., 10.3390/joitmc7010070).")
+        else:
+            st.sidebar.error("No DOI detected in the input. Please paste a DOI like 10.3390/joitmc7010070.")
     else:
         try:
             works = Works()
