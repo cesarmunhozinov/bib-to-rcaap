@@ -91,32 +91,68 @@ def _authors_for_db_title(title_row: dict, db: RCAAPDatabase) -> str:
     return '; '.join([f for f in formatted if f])
 
 
-def _render_article_preview(title_row: dict, db: RCAAPDatabase | None = None, parsed_authors: list[dict] | None = None):
-    # Title + link
+def _assemble_preview_row(title_row: dict, db: RCAAPDatabase | None = None, parsed_authors: list[dict] | None = None) -> dict:
+    """Return a merged dict containing Title, Year, DOI, URL, Venue Name, and authors_line.
+
+    Uses DB joins (Author-Title + Authors + Venue) when db is provided. Falls back to parsed authors and
+    `journal` field for venue. Ensures placeholders for missing data (e.g., 'Unknown Venue')."""
+    # Base title info
     title_text = title_row.get('Title') or title_row.get('title') or ''
     doi = (title_row.get('DOI') or title_row.get('doi') or '').strip()
     url = title_row.get('URL') or title_row.get('url') or ''
-    link = ''
-    if doi:
-        link = f"https://doi.org/{doi}"
-    elif url:
-        link = url
+    year = title_row.get('Year') or title_row.get('year') or ''
 
-    # Escape basic markdown-sensitive characters
-    esc_title = title_text.replace('[', '\\[').replace(']', '\\]')
+    venue_name = ''
+    authors_line = ''
 
-    if link:
-        st.markdown(f"### **[{esc_title}]({link})**")
-    else:
-        st.markdown(f"### **{esc_title}**")
+    # Try DB-based assembly if db is provided
+    if db is not None:
+        # Venue via ID Venue
+        id_venue = title_row.get('ID Venue')
+        try:
+            venue_rows = db._get_ws('Venue').get_all_records()
+            if id_venue:
+                vm = next((r for r in venue_rows if r.get('ID Venue') == id_venue), None)
+                venue_name = vm.get('Venue Name') if vm else ''
+            # fallback: try to match by journal name
+            if not venue_name:
+                journal_name = title_row.get('journal') or title_row.get('Venue') or ''
+                if journal_name:
+                    vm = next((r for r in venue_rows if (r.get('Venue Name') or '').strip().lower() == journal_name.strip().lower()), None)
+                    venue_name = vm.get('Venue Name') if vm else ''
+        except Exception:
+            venue_name = ''
 
-    # Author byline
-    if db is not None and title_row.get('ID Title'):
-        authors_line = _authors_for_db_title(title_row, db)
-    else:
-        # fallback: use parsed_authors if provided
-        authors_line = ''
-        if parsed_authors is not None:
+        # Authors via Author-Title junction
+        try:
+            at_rows = db._get_ws('Author-Title').get_all_records()
+            authors_rows = db._get_ws('Authors').get_all_records()
+            title_id = title_row.get('ID Title') or ''
+            links = [r for r in at_rows if r.get('ID Title') == title_id]
+            ordered = sorted(links, key=lambda x: int(x.get('Order') or 0))
+            id_to_author = {r.get('ID Author'): r.get('Author Name') for r in authors_rows}
+            formatted = []
+            for l in ordered:
+                aid = l.get('ID Author')
+                name = id_to_author.get(aid, '')
+                if not name:
+                    continue
+                parts = name.strip().split()
+                if len(parts) == 1:
+                    given, family = parts[0], ''
+                else:
+                    given, family = ' '.join(parts[:-1]), parts[-1]
+                formatted.append(_format_author_name_from_parts(given, family))
+            authors_line = '; '.join([f for f in formatted if f])
+        except Exception:
+            authors_line = ''
+
+    # Fallbacks when DB is not available or data not found
+    if not venue_name:
+        venue_name = title_row.get('journal') or title_row.get('Venue') or 'Unknown Venue'
+
+    if not authors_line and parsed_authors is not None:
+        try:
             key = title_row.get('key')
             auths = [a for a in parsed_authors if a.get('key') == key]
             auths_sorted = sorted(auths, key=lambda x: int(x.get('order', 0)))
@@ -133,23 +169,51 @@ def _render_article_preview(title_row: dict, db: RCAAPDatabase | None = None, pa
                         given, family = ' '.join(parts[:-1]), parts[-1]
                 formatted.append(_format_author_name_from_parts(given, family))
             authors_line = '; '.join([f for f in formatted if f])
+        except Exception:
+            authors_line = ''
 
+    if not authors_line:
+        authors_line = ''
+
+    return {
+        'Title': title_text,
+        'Year': year,
+        'DOI': doi,
+        'URL': url,
+        'Venue Name': venue_name,
+        'authors_line': authors_line,
+        # keep original ids for reference
+        'ID Title': title_row.get('ID Title') or title_row.get('id') or title_row.get('key'),
+        'ID Venue': title_row.get('ID Venue') or None,
+    }
+
+
+def _render_article_preview(title_row: dict, db: RCAAPDatabase | None = None, parsed_authors: list[dict] | None = None):
+    # Accept either a raw title row or a preassembled merged dict
+    merged = title_row if ('Venue Name' in title_row or 'authors_line' in title_row) else _assemble_preview_row(title_row, db=db, parsed_authors=parsed_authors)
+
+    title_text = merged.get('Title') or ''
+    doi = (merged.get('DOI') or '').strip()
+    url = merged.get('URL') or ''
+    link = ''
+    if doi:
+        link = f"https://doi.org/{doi}"
+    elif url:
+        link = url
+
+    esc_title = title_text.replace('[', '\\[').replace(']', '\\]')
+
+    if link:
+        st.markdown(f"### **[{esc_title}]({link})**")
+    else:
+        st.markdown(f"### **{esc_title}**")
+
+    authors_line = merged.get('authors_line') or ''
     if authors_line:
         st.markdown(f"<span style='color: #006621;'>{authors_line}</span>", unsafe_allow_html=True)
 
-    # Venue & Year
-    venue_name = ''
-    year = title_row.get('Year') or title_row.get('year') or ''
-    if db is not None and title_row.get('ID Venue'):
-        try:
-            v = db._get_ws('Venue').get_all_records()
-            vm = next((r for r in v if r.get('ID Venue') == title_row.get('ID Venue')), None)
-            venue_name = vm.get('Venue Name') if vm else ''
-        except Exception:
-            venue_name = ''
-    else:
-        venue_name = title_row.get('journal') or title_row.get('Venue') or ''
-
+    venue_name = merged.get('Venue Name') or 'Unknown Venue'
+    year = merged.get('Year') or ''
     if venue_name or year:
         st.markdown(f"{venue_name} {str(year)}")
 
@@ -192,7 +256,12 @@ if st.sidebar.button("Run search"):
             st.sidebar.success(f"Found {len(results)} results")
             st.subheader("Search results")
             for t in results[:preview_limit]:
-                _render_article_preview(t, db=db, parsed_authors=None)
+                try:
+                    merged = _assemble_preview_row(t, db=db, parsed_authors=None)
+                    _render_article_preview(merged, db=db, parsed_authors=None)
+                except Exception as e:
+                    logger.exception("Failed to render preview for search result: %s", e)
+                    st.warning(f"Preview unavailable for a search result: {e}")
         except Exception as e:
             st.sidebar.error(f"Search failed: {e}")
 
@@ -392,8 +461,14 @@ if entries:
         st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
 
     # Render previews (limit)
+    # Render previews with safety: each preview rendered inside a try/except to avoid a single bad row crashing the app
     for t in titles[:preview_limit]:
-        _render_article_preview(t, db=None, parsed_authors=authors)
+        try:
+            merged = _assemble_preview_row(t, db=None, parsed_authors=authors)
+            _render_article_preview(merged, db=None, parsed_authors=None)
+        except Exception as e:
+            logger.exception("Failed to render preview for parsed title: %s", e)
+            st.warning(f"Preview unavailable for a parsed entry: {e}")
 
     # RCAAP export (primary action): generate CSV from the relational sheets if available (fallback to local parsed rows)
     def generate_rcaap_csv(db: RCAAPDatabase | None, titles_list, authors_list) -> str:
