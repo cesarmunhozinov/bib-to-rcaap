@@ -1,6 +1,6 @@
-# bib-to-rcaap
+# RCAAP Converter (bib-to-rcaap)
 
-This project converts BibTeX metadata into rows written to a Google Spreadsheet formatted for RCAAP. It supports Authors, Titles, Events and Logs tabs.
+The RCAAP Converter converts BibTeX metadata into rows written to a Google Spreadsheet formatted for RCAAP. It supports Authors, Titles, Events and Logs tabs.
 
 ## Setup ✅
 
@@ -58,16 +58,16 @@ Run tests with:
 pytest
 ```
 
-## Web UI (Streamlit) 🖥️
+## RCAAP Converter Web UI (Streamlit) 🖥️
 
-You can run a simple web interface to upload `.bib` files, preview parsed rows and sync to your RCAAP sheet:
+You can run the RCAAP Converter web interface to upload `.bib` files, preview parsed rows and sync to your RCAAP sheet:
 
 ```bash
 streamlit run app.py
 ```
 
 Notes:
-- Use the sidebar to upload a `.bib` file, choose which tabs to sync and run searches on the existing sheet.
+- Use the sidebar to upload a `.bib` file and run searches on the existing sheet.
 - The app uses the same `SPREADSHEET_ID` configuration as the CLI.
 - On Streamlit Cloud, set your service account JSON in the app's Secrets as `gcp_service_account` (either as a TOML mapping or JSON string). The app will use `st.secrets["gcp_service_account"]` to authenticate so you don't need a local `credentials.json` file.
 
