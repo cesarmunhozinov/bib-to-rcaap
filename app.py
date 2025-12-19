@@ -405,35 +405,9 @@ if entries:
                         return
                 db._append_dicts('Author-Title', [{'ID Author': id_author, 'ID Title': id_title, 'Order': str(order)}])
 
-            # Build relational rows from current entries
-            # Use entries parsed earlier: titles (entries_to_titles) and authors (entries_to_authors)
-            # Iterate through titles and persist relationally
-            if titles:
-                # first, make sure to operate on live snapshots so that reads reflect writes
-                for t in titles:
-                    # publisher
-                    pub_name = t.get('publisher', '')
-                    id_pub = get_or_create_publisher(pub_name) if pub_name else ''
-                    # venue — use journal field as venue
-                    venue_name = t.get('journal', '')
-                    id_venue = get_or_create_venue(venue_name, id_pub) if venue_name else ''
-                    # prepare title row with id_venue
-                    trow = t.copy()
-                    trow['id_venue'] = id_venue
-                    id_title = create_or_get_title_id(trow)
-
-                    # authors for this title
-                    if authors:
-                        auths_for = [a for a in authors if a.get('key') == t.get('key')]
-                        for a in sorted(auths_for, key=lambda x: int(x.get('order', 0))):
-                            name = a.get('name')
-                            orcid = a.get('orcid', '')
-                            affiliation = a.get('affiliation', '')
-                            id_author = get_or_create_author(name, orcid, affiliation)
-                            ensure_author_title_link(id_author, id_title, int(a.get('order', 0)))
-
-            # After successful write
-            db.write_log(f"Streamlit sync: {uploaded.name if uploaded is not None else doi_input} (synced relational schema)")
+            # Build relational rows by calling the sync helper
+            from relational_sync import sync_entries
+            sync_entries(db, titles, authors, source=(uploaded.name if uploaded is not None else doi_input))
             st.success("Sync complete")
         except Exception as e:
             st.error(f"Sync failed: {e}")
