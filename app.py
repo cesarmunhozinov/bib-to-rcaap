@@ -686,7 +686,7 @@ if entries:
             # Build relational rows by calling the sync helper
             from relational_sync import sync_entries
             sync_entries(db, titles, authors, source=(uploaded.name if uploaded is not None else doi_input))
-            st.success('Sync Complete.')
+            st.success('Successfully synced to Google Sheets!')
         except Exception as e:
             st.error(f"Sync failed: {e}")
 else:

@@ -39,18 +39,18 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
             # authors associated with this title
             auths_for = [a for a in authors if a.get("key") == t.get("key")]
 
-                def _parse_order_local(val) -> int:
+            def _parse_order_local(val) -> int:
+                try:
+                    return int(val)
+                except Exception:
                     try:
-                        return int(val)
+                        return int(float(val))
                     except Exception:
-                        try:
-                            return int(float(val))
-                        except Exception:
-                            return 0
+                        return 0
 
-                for a in sorted(auths_for, key=lambda x: _parse_order_local(x.get("order"))):
-                    id_author = db.get_or_create_author(a.get("name"), a.get("orcid", ""), a.get("affiliation", ""))
-                    db.add_author_title(id_author, id_title, _parse_order_local(a.get("order")))
+            for a in sorted(auths_for, key=lambda x: _parse_order_local(x.get("order"))):
+                id_author = db.get_or_create_author(a.get("name"), a.get("orcid", ""), a.get("affiliation", ""))
+                db.add_author_title(id_author, id_title, _parse_order_local(a.get("order")))
         # Return for in-memory DB (no external Logs sheet writes)
         return
 
