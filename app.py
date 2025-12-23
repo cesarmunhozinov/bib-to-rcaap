@@ -761,6 +761,31 @@ elif "Local file" in creds_source:
 else:
     st.warning(creds_source)
 
+def _defensive_parse_entries(raw_entries: list[dict] | None) -> list[dict]:
+    """Convert raw BibTeX entries into preview-ready dicts with safe defaults."""
+    parsed_entries: list[dict] = []
+    for entry in raw_entries or []:
+        title = entry.get("title", "Unknown Title") or "Unknown Title"
+        authors_field = entry.get("author", "") or ""
+        authors_list = [a.strip() for a in authors_field.split(" and ") if a.strip()] if authors_field else []
+        venue = entry.get("journal", entry.get("booktitle", "Unknown Venue")) or "Unknown Venue"
+        year = entry.get("year", "Unknown Year") or "Unknown Year"
+        doi = entry.get("doi") or None
+        url = entry.get("url") or None
+        abstract = entry.get("abstract", "") or ""
+
+        parsed_entries.append({
+            "Title": title,
+            "Authors": authors_list,
+            "Venue": venue,
+            "Year": year,
+            "DOI": doi,
+            "URL": url,
+            "Abstract": abstract,
+        })
+    return parsed_entries
+
+
 def render_scholar_ui(entry: dict):
     """Render a single entry in the Scholar UI layout (defensive and precise).
 
@@ -796,56 +821,24 @@ def render_scholar_ui(entry: dict):
 
 # Example usage
 if uploaded:
-    # Defensive parsing: build a simple list of normalized dicts from the uploaded file
-    content = uploaded.read().decode("utf-8")
-    parser = BibTexParser()
-    parser.customization = homogenize_latex_encoding
-    bibdb = bibtexparser.loads(content, parser=parser)
-    raw_entries = bibdb.entries or []
+    # Use the dedicated parser for raw BibTeX preview (defensive and consistent)
+    try:
+        content = uploaded.read().decode("utf-8")
+        parser = BibTexParser()
+        parser.customization = homogenize_latex_encoding
+        bibdb = bibtexparser.loads(content, parser=parser)
+        raw_entries = bibdb.entries or []
+    except Exception as e:
+        st.error(f"Failed to parse uploaded file: {e}")
+        raw_entries = []
 
-    parsed_entries = []
-    for e in raw_entries:
-        # Use .get with safe defaults to prevent KeyError / NoneType issues
-        title = e.get("title", "Unknown Title") or "Unknown Title"
-        authors_field = e.get("author", "") or ""
-        authors_list = [a.strip() for a in authors_field.split(" and ") if a.strip()] if authors_field else []
-        venue = e.get("journal", e.get("booktitle", "Unknown Venue")) or "Unknown Venue"
-        year = e.get("year", "Unknown Year") or "Unknown Year"
-        doi = e.get("doi") or None
-        url = e.get("url") or None
-        abstract = e.get("abstract", "") or ""
+    parsed_entries = _defensive_parse_entries(raw_entries)
 
-        parsed_entries.append({
-            "Title": title,
-            "Authors": authors_list,
-            "Venue": venue,
-            "Year": year,
-            "DOI": doi,
-            "URL": url,
-            "Abstract": abstract,
-        })
-
-    # Pre-save preview: use only the parsed_entries (no Google Sheets queries here)
+    # Pre-save preview: display only parsed_entries (no DB queries) and avoid crashes
     for entry in parsed_entries:
         try:
-            # Traceback guard: check values before display
-            title = entry.get("Title") if entry.get("Title") is not None else "Unknown Title"
-            authors = entry.get("Authors") if entry.get("Authors") is not None else []
-            venue = entry.get("Venue") if entry.get("Venue") is not None else "Unknown Venue"
-            year = entry.get("Year") if entry.get("Year") is not None else "Unknown Year"
-
-            # Render using Scholar UI (defensive and exact format)
-            # Ensure authors are joined with semicolons for the preview
-            entry_for_ui = {
-                "Title": title,
-                "DOI": entry.get("DOI"),
-                "Authors": authors,
-                "Venue": venue,
-                "Year": year,
-            }
-            render_scholar_ui(entry_for_ui)
+            render_scholar_ui(entry)
         except KeyError as ke:
             st.error(f"Missing field in entry: {ke}")
         except Exception as e:
-            # Catch NoneType and other issues and continue rendering remaining entries
             st.error(f"Error rendering entry: {e}")
