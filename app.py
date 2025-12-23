@@ -777,12 +777,15 @@ if entries:
                     try:
                         # Safe extraction
                         title_text = (entry.get('title') or '').strip() or 'Untitled'
-                        authors_text = (entry.get('authors') or '').strip()
+                        # Try both 'author' and 'authors' keys for compatibility
+                        authors_text = (entry.get('author') or entry.get('authors') or '').strip()
                         year_text = (entry.get('year') or '').strip() or '0000'
                         doi_text = (entry.get('doi') or '').strip()
                         abstract_text = (entry.get('abstract') or '').strip()
                         language_text = (entry.get('language') or '').strip() or 'en'
                         rcaap_type_text = (entry.get('type') or '').strip() or 'article'
+                        
+                        st.write(f"   📝 Authors text: {authors_text if authors_text else 'No authors found'}")
 
                         # Get or create publisher and venue
                         try:
@@ -817,16 +820,23 @@ if entries:
 
                         # Parse authors
                         if authors_text:
+                            st.write(f"   👥 Processing {len(authors_text.split(';'))} author(s)...")
                             author_list = [a.strip() for a in authors_text.split(';') if a.strip()]
                             for order_idx, author_str in enumerate(author_list, 1):
                                 try:
                                     # Parse author name
                                     author_full_name = author_str.strip()
+                                    st.write(f"      → Author {order_idx}: {author_full_name}")
                                     
                                     author_id = get_or_create_author(author_full_name)
+                                    st.write(f"      ✓ Created/found author ID: {author_id}")
+                                    
                                     ensure_author_title_link(author_id, title_id, order_idx)
+                                    st.write(f"      ✓ Linked to title {title_id} with order {order_idx}")
                                 except Exception as author_err:
                                     st.warning(f"Could not link author '{author_str}': {author_err}")
+                        else:
+                            st.write("   ⚠️ No authors found in entry")
 
                         synced_count += 1
                         st.success(f"✅ Entry {idx} synced!")
