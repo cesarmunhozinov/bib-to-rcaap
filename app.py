@@ -524,6 +524,25 @@ if entries:
     # Validate before sync
     entries_for_sync = curated_entries if curated_entries else entries
 
+    # Check validation status for acknowledgment UI
+    sync_valid = True
+    invalid_entries = []
+    for e in entries_for_sync:
+        is_valid, missing = validate_entry(e)
+        if not is_valid:
+            invalid_entries.append((e.get('title', 'Untitled'), missing))
+            sync_valid = False
+    
+    # Acknowledgment checkbox for incomplete entries
+    acknowledge_incomplete = False
+    if not sync_valid:
+        missing_str = "\n".join([f"• {title}: Missing {', '.join(m)}" for title, m in invalid_entries])
+        st.warning(f"⚠️ **Some entries are incomplete for RCAAP standards:**\n{missing_str}")
+        acknowledge_incomplete = st.checkbox(
+            "I acknowledge that these entries are incomplete for RCAAP standards and I wish to sync them anyway.",
+            key="acknowledge_incomplete"
+        )
+
     # RCAAP export (primary action): generate CSV from the relational sheets if available (fallback to local parsed rows)
 
     def generate_rcaap_csv(db: RCAAPDatabase | None, titles_list, authors_list) -> str:
@@ -631,19 +650,12 @@ if entries:
     )
 
     # Secondary: sync to Google Sheets
-    if st.button("Sync to Google Sheets", key="sync"):
-        # Final validation before sync
-        sync_valid = True
-        invalid_entries = []
-        for e in entries_for_sync:
-            is_valid, missing = validate_entry(e)
-            if not is_valid:
-                invalid_entries.append((e.get('title', 'Untitled'), missing))
-                sync_valid = False
-        
-        if not sync_valid:
-            missing_str = "\n".join([f"• {title}: Missing {', '.join(m)}" for title, m in invalid_entries])
-            st.error(f"Cannot sync: Please fill in the missing metadata:\n{missing_str}")
+    # Enable sync if: (1) all entries valid, OR (2) incomplete but acknowledged
+    sync_enabled = sync_valid or acknowledge_incomplete
+    
+    if st.button("Sync to Google Sheets", key="sync", disabled=not sync_enabled):
+        if not sync_enabled:
+            st.error("Cannot sync: Please acknowledge incomplete entries or complete the missing metadata.")
         else:
             try:
                 try:
@@ -663,10 +675,10 @@ if entries:
                         ws = db._get_ws(title)
                     db._ensure_header(ws, headers)
 
-                # Desired schema
+                # Desired schema (with Status column for Title table)
                 _ensure_sheet_and_header('Publisher', ['ID Publisher', 'Publisher Name'])
                 _ensure_sheet_and_header('Venue', ['ID Venue', 'Venue Name', 'ID Publisher'])
-                _ensure_sheet_and_header('Title', ['ID Title', 'Title', 'Year', 'ID Venue', 'DOI', 'URL', 'Abstract', 'Type', 'Language', 'Keywords'])
+                _ensure_sheet_and_header('Title', ['ID Title', 'Title', 'Year', 'ID Venue', 'DOI', 'URL', 'Abstract', 'Type', 'Language', 'Keywords', 'Status'])
                 _ensure_sheet_and_header('Authors', ['ID Author', 'Author Name', 'ORCID', 'Affiliation'])
                 _ensure_sheet_and_header('Author-Title', ['ID Author', 'ID Title', 'Order'])
 
@@ -743,6 +755,7 @@ if entries:
                         'Type': title_row.get('type', ''),
                         'Language': title_row.get('language', ''),
                         'Keywords': title_row.get('keywords', ''),
+                        'Status': title_row.get('status', 'Verified'),
                     }])
                     return nid
 
@@ -775,6 +788,10 @@ if entries:
                         pub_id = get_or_create_publisher(entry, db_exists)
                         venue_id = get_or_create_venue(entry, db_exists)
 
+                        # Determine Status based on validation
+                        is_valid, _ = validate_entry(entry)
+                        status = "Verified" if is_valid else "Draft/Incomplete"
+
                         # Create title
                         title_row = {
                             'title': title_text,
@@ -786,6 +803,7 @@ if entries:
                             'type': rcaap_type_text,
                             'language': language_text,
                             'keywords': (entry.get('keywords') or '').strip(),
+                            'status': status,
                         }
                         title_id = create_or_get_title_id(title_row) if db_exists else _next_id([], 'T')
 
