@@ -190,7 +190,7 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
                 except Exception:
                     return 0
 
-        for a in sorted(auths_for, key=lambda x: _parse_order_sheet(a.get('order'))):
+        for a in sorted(auths_for, key=lambda row: _parse_order_sheet(row.get('order'))):
             id_author = get_or_create_author(a.get('name'), a.get('orcid', ''), a.get('affiliation', ''))
             ensure_author_title_link(id_author, id_title, _parse_order_sheet(a.get('order')))
 
