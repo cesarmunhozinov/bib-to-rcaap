@@ -38,18 +38,19 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
             )
             # authors associated with this title
             auths_for = [a for a in authors if a.get("key") == t.get("key")]
-            def _parse_order_local(val) -> int:
-            try:
-                return int(val)
-            except Exception:
-                try:
-                    return int(float(val))
-                except Exception:
-                    return 0
 
-        for a in sorted(auths_for, key=lambda x: _parse_order_local(x.get("order"))):
-                id_author = db.get_or_create_author(a.get("name"), a.get("orcid", ""), a.get("affiliation", ""))
-                db.add_author_title(id_author, id_title, _parse_order_local(a.get("order")))
+                def _parse_order_local(val) -> int:
+                    try:
+                        return int(val)
+                    except Exception:
+                        try:
+                            return int(float(val))
+                        except Exception:
+                            return 0
+
+                for a in sorted(auths_for, key=lambda x: _parse_order_local(x.get("order"))):
+                    id_author = db.get_or_create_author(a.get("name"), a.get("orcid", ""), a.get("affiliation", ""))
+                    db.add_author_title(id_author, id_title, _parse_order_local(a.get("order")))
         # Return for in-memory DB (no external Logs sheet writes)
         return
 
@@ -76,6 +77,9 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
         nums = [int(s.lstrip(prefix)) for s in existing_ids if s and s.startswith(prefix) and s.lstrip(prefix).isdigit()]
         maxn = max(nums) if nums else 0
         return f"{prefix}{(maxn+1):03d}"
+
+    def _clean(val: Any) -> str:
+        return "" if val is None else val
 
     def get_or_create_publisher(name: str) -> str:
         name = (name or "").strip()
@@ -130,15 +134,15 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
         nid = _next_id(existing_ids, 'T')
         db._append_dicts('Title', [{
             'ID Title': nid,
-            'Title': title_row.get('title', ''),
-            'Year': title_row.get('year', ''),
-            'ID Venue': title_row.get('id_venue', ''),
-            'DOI': title_row.get('doi', ''),
-            'URL': title_row.get('url', ''),
-            'Abstract': title_row.get('abstract', ''),
-            'Type': title_row.get('type', ''),
-            'Language': title_row.get('language', ''),
-            'Keywords': title_row.get('keywords', ''),
+            'Title': _clean(title_row.get('title', '')),
+            'Year': _clean(title_row.get('year', '')),
+            'ID Venue': _clean(title_row.get('id_venue', '')),
+            'DOI': _clean(title_row.get('doi', '')),
+            'URL': _clean(title_row.get('url', '')),
+            'Abstract': _clean(title_row.get('abstract', '')),
+            'Type': _clean(title_row.get('type', '')),
+            'Language': _clean(title_row.get('language', '')),
+            'Keywords': _clean(title_row.get('keywords', '')),
         }])
         return nid
 
@@ -176,9 +180,19 @@ def sync_entries(db: Any, titles: List[Dict[str, Any]], authors: List[Dict[str, 
         id_title = create_or_get_title_id(trow)
 
         auths_for = [a for a in authors if a.get('key') == t.get('key')]
-        for a in sorted(auths_for, key=lambda x: int(x.get('order', 0))):
+
+        def _parse_order_sheet(val) -> int:
+            try:
+                return int(val)
+            except Exception:
+                try:
+                    return int(float(val))
+                except Exception:
+                    return 0
+
+        for a in sorted(auths_for, key=lambda x: _parse_order_sheet(a.get('order'))):
             id_author = get_or_create_author(a.get('name'), a.get('orcid', ''), a.get('affiliation', ''))
-            ensure_author_title_link(id_author, id_title, int(a.get('order', 0)))
+            ensure_author_title_link(id_author, id_title, _parse_order_sheet(a.get('order')))
 
     # Log locally only; do not write to a Logs sheet to keep to the 5-table relational schema
     import logging
