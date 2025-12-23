@@ -197,5 +197,28 @@ def entries_to_events(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def map_bibtex_to_paper_object(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Map a BibTeX entry to a standardized Paper Object for the database."""
+    paper = {
+        "Title": _clean_text(entry.get("title", "Unknown Title")),
+        "Year": entry.get("year", "Unknown Year"),
+        "Venue": _clean_text(entry.get("journal", entry.get("booktitle", "Unknown Venue"))),
+        "DOI": entry.get("doi", None),
+        "URL": entry.get("url", None),
+        "Abstract": _clean_text(entry.get("abstract", "")),
+        "Type": entry.get("ENTRYTYPE", "Unknown Type"),
+        "Language": entry.get("language", "Unknown Language"),
+        "Keywords": entry.get("keywords", ""),
+        "Authors": [],
+    }
+
+    authors_field = entry.get("author", "")
+    if authors_field:
+        authors = [a.strip() for a in authors_field.split(" and ") if a.strip()]
+        paper["Authors"] = authors
+
+    return paper
+
+
 if __name__ == "__main__":
     print("bibtex_parser: provide parse_bib_file(), entries_to_titles(), entries_to_authors(), entries_to_events()")

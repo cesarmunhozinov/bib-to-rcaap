@@ -172,6 +172,133 @@ class RCAAPDatabase:
 
         ws.append_rows(to_append, value_input_option="USER_ENTERED")
 
+    def write_publisher(self, rows: List[Dict[str, Any]]) -> None:
+        """Write publisher entries to `Publisher` tab.
+
+        This enforces an exact 2-column schema: 'ID Publisher', 'Publisher Name'.
+        Any incoming rows will be mapped to these keys to avoid appending legacy/extra columns to the sheet.
+        """
+        if not rows:
+            return
+        ws = self._get_ws("Publisher")
+        headers = ["ID Publisher", "Publisher Name"]
+        existing = ws.get_all_values()
+        if not existing or not any(existing):
+            ws.insert_row(headers, index=1)
+        else:
+            current_header = existing[0]
+            if current_header != headers:
+                try:
+                    ws.delete_rows(1)
+                except Exception:
+                    pass
+                ws.insert_row(headers, index=1)
+
+        to_append = []
+        for r in rows:
+            row = [r.get("ID Publisher", ""), r.get("Publisher Name", "")]
+            to_append.append(row)
+
+        ws.append_rows(to_append, value_input_option="USER_ENTERED")
+
+    def write_venue(self, rows: List[Dict[str, Any]]) -> None:
+        """Write venue entries to `Venue` tab.
+
+        This enforces an exact 3-column schema: 'ID Venue', 'Venue Name', 'ID Publisher'.
+        Any incoming rows will be mapped to these keys to avoid appending legacy/extra columns to the sheet.
+        """
+        if not rows:
+            return
+        ws = self._get_ws("Venue")
+        headers = ["ID Venue", "Venue Name", "ID Publisher"]
+        existing = ws.get_all_values()
+        if not existing or not any(existing):
+            ws.insert_row(headers, index=1)
+        else:
+            current_header = existing[0]
+            if current_header != headers:
+                try:
+                    ws.delete_rows(1)
+                except Exception:
+                    pass
+                ws.insert_row(headers, index=1)
+
+        to_append = []
+        for r in rows:
+            row = [r.get("ID Venue", ""), r.get("Venue Name", ""), r.get("ID Publisher", "")]
+            to_append.append(row)
+
+        ws.append_rows(to_append, value_input_option="USER_ENTERED")
+
+    def write_title(self, rows: List[Dict[str, Any]]) -> None:
+        """Write title entries to `Title` tab.
+
+        This enforces an exact 8-column schema: 'ID Title', 'Title', 'Year', 'ID Venue', 'DOI', 'URL', 'Abstract', 'Type', 'Language', 'Keywords'.
+        Any incoming rows will be mapped to these keys to avoid appending legacy/extra columns to the sheet.
+        """
+        if not rows:
+            return
+        ws = self._get_ws("Title")
+        headers = ["ID Title", "Title", "Year", "ID Venue", "DOI", "URL", "Abstract", "Type", "Language", "Keywords"]
+        existing = ws.get_all_values()
+        if not existing or not any(existing):
+            ws.insert_row(headers, index=1)
+        else:
+            current_header = existing[0]
+            if current_header != headers:
+                try:
+                    ws.delete_rows(1)
+                except Exception:
+                    pass
+                ws.insert_row(headers, index=1)
+
+        to_append = []
+        for r in rows:
+            row = [
+                r.get("ID Title", ""),
+                r.get("Title", ""),
+                r.get("Year", ""),
+                r.get("ID Venue", ""),
+                r.get("DOI", ""),
+                r.get("URL", ""),
+                r.get("Abstract", ""),
+                r.get("Type", ""),
+                r.get("Language", ""),
+                r.get("Keywords", ""),
+            ]
+            to_append.append(row)
+
+        ws.append_rows(to_append, value_input_option="USER_ENTERED")
+
+    def write_author_title(self, rows: List[Dict[str, Any]]) -> None:
+        """Write author-title entries to `Author-Title` tab.
+
+        This enforces an exact 3-column schema: 'ID Author', 'ID Title', 'Order'.
+        Any incoming rows will be mapped to these keys to avoid appending legacy/extra columns to the sheet.
+        """
+        if not rows:
+            return
+        ws = self._get_ws("Author-Title")
+        headers = ["ID Author", "ID Title", "Order"]
+        existing = ws.get_all_values()
+        if not existing or not any(existing):
+            ws.insert_row(headers, index=1)
+        else:
+            current_header = existing[0]
+            if current_header != headers:
+                try:
+                    ws.delete_rows(1)
+                except Exception:
+                    pass
+                ws.insert_row(headers, index=1)
+
+        to_append = []
+        for r in rows:
+            row = [r.get("ID Author", ""), r.get("ID Title", ""), r.get("Order", "")]
+            to_append.append(row)
+
+        ws.append_rows(to_append, value_input_option="USER_ENTERED")
+
     # Legacy single-tab writer helpers (Titles, Events, Logs) removed to enforce the
     # normalized 5-table relational schema. Use `relational_sync.sync_entries` to
     # synchronise data to 'Publisher', 'Venue', 'Title', 'Authors', and 'Author-Title'.

@@ -569,7 +569,7 @@ if entries:
                             id_pub = v.get('ID Publisher')
                             pub_name = pub_map.get(id_pub, '')
                     auths = tt.get(id_title, [])
-                    auths_sorted = [author_map[a_id] for _, a_id in sorted(auths, key=lambda x: x[0])]
+                    auths_sorted = [author_map[a_id] for a_id in sorted(auths, key=lambda x: x[0])]
                     authors_joined = '; '.join(auths_sorted)
 
                     writer.writerow([title_str, authors_joined, year, pub_name, doi])
@@ -760,3 +760,39 @@ elif "Local file" in creds_source:
     st.info(f"Auth: {creds_source}")
 else:
     st.warning(creds_source)
+
+def render_scholar_ui(entry: dict):
+    """Render a single entry in the Scholar UI layout."""
+    title = entry.get("Title", "Unknown Title")
+    doi = entry.get("DOI")
+    authors = entry.get("Authors", ["Unknown Author"])
+    venue = entry.get("Venue", "Unknown Venue")
+    year = entry.get("Year", "Unknown Year")
+
+    # Title (bold, large, hyperlinked if DOI exists)
+    if doi:
+        st.markdown(f"**[{title}]({doi})**")
+    else:
+        st.markdown(f"**{title}**")
+
+    # Author Line (small font, green/grey color)
+    author_line = ", ".join(authors)
+    st.markdown(f"<span style='font-size:small;color:grey;'>{author_line}</span>", unsafe_allow_html=True)
+
+    # Venue & Year (regular font)
+    st.write(f"{venue} ({year})")
+
+# Example usage
+if uploaded:
+    content = uploaded.read().decode("utf-8")
+    parser = BibTexParser()
+    parser.customization = homogenize_latex_encoding
+    bibdb = bibtexparser.loads(content, parser=parser)
+    entries = bibdb.entries
+
+    for entry in entries:
+        try:
+            paper = map_bibtex_to_paper_object(entry)
+            render_scholar_ui(paper)
+        except Exception as e:
+            st.error(f"Error rendering entry: {e}")
