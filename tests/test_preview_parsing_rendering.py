@@ -1,38 +1,37 @@
 import app
 
 
-def test_defensive_parse_entries_defaults():
+def test_build_display_entry_defaults_and_mapping():
     raw = [
         {
             "title": "Sample Title",
             "author": "Alice Example and Bob Tester",
             "booktitle": "Conf X",
             "year": "2024",
-            "doi": "10.1000/xyz",
-            "url": "http://example.com",
+            "abstract": "Something",
         },
         {"title": None},
     ]
 
-    parsed = app._defensive_parse_entries(raw)
+    display_list = [app._build_display_entry(e) for e in raw]
 
-    assert len(parsed) == 2
-    first = parsed[0]
-    assert first["Title"] == "Sample Title"
-    assert first["Authors"] == ["Alice Example", "Bob Tester"]
-    assert first["Venue"] == "Conf X"
-    assert first["Year"] == "2024"
-    assert first["DOI"] == "10.1000/xyz"
-    assert first["URL"] == "http://example.com"
+    assert len(display_list) == 2
+    first = display_list[0]
+    assert first["display_title"] == "Sample Title"
+    assert first["display_authors"] == "Example, A.; Tester, B."
+    assert first["display_venue"] == "Conf X"
+    assert first["display_year"] == "2024"
+    assert first["display_abstract"] == "Something"
 
-    second = parsed[1]
-    assert second["Title"] == "Unknown Title"
-    assert second["Authors"] == []
-    assert second["Venue"] == "Unknown Venue"
-    assert second["Year"] == "Unknown Year"
+    second = display_list[1]
+    assert second["display_title"] == "Untitled"
+    assert second["display_authors"] == "Unknown Author"
+    assert second["display_venue"] == "N/A"
+    assert second["display_year"] == ""
+    assert second["display_abstract"] == "No abstract in BibTeX"
 
 
-def test_render_scholar_ui_semicolon_and_layout(monkeypatch):
+def test_display_preview_safe_renders_expected(monkeypatch):
     calls = []
 
     class FakeSt:
@@ -42,22 +41,23 @@ def test_render_scholar_ui_semicolon_and_layout(monkeypatch):
         def write(self, text):
             calls.append(text)
 
+        def error(self, text):
+            calls.append(text)
+
     fake = FakeSt()
     monkeypatch.setattr(app, "st", fake)
 
-    entry = {
-        "Title": "Preview Paper",
-        "Authors": ["Author One", "Author Two"],
-        "Venue": "Venue Y",
-        "Year": "2025",
-        "DOI": None,
-    }
+    entries = [
+        {
+            "display_title": "Preview Paper",
+            "display_authors": "One, A.; Two, B.",
+            "display_venue": "Venue Y",
+            "display_year": "2025",
+        }
+    ]
 
-    app.render_scholar_ui(entry)
+    app.display_preview_safe(entries)
 
-    # Title rendered in bold
-    assert any("**" in c for c in calls)
-    # Authors joined with semicolons
-    assert any("Author One; Author Two" in c for c in calls)
-    # Venue and Year line present
-    assert any("Venue Y (2025)" in c for c in calls)
+    assert any("Preview Paper" in c for c in calls)
+    assert any("One, A.; Two, B." in c for c in calls)
+    assert any("Venue Y, 2025" in c for c in calls)

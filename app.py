@@ -331,19 +331,82 @@ def extract_doi(text: str) -> str | None:
     return doi.rstrip(").,;\"'")
 
 
-# Parse uploaded file and show preview
+# ---- Safe-mode parsing + display preview (zero DB) ----
+
+def _format_author_name_safe(name: str) -> str:
+    """Format a single author to "Lastname, F." using a forgiving heuristic."""
+    if not name:
+        return ""
+    name = name.strip()
+    if not name:
+        return ""
+    if "," in name:
+        parts = [p.strip() for p in name.split(",") if p.strip()]
+        family = parts[0] if parts else ""
+        given = parts[1] if len(parts) > 1 else ""
+    else:
+        tokens = name.split()
+        if not tokens:
+            return ""
+        family = tokens[-1]
+        given = " ".join(tokens[:-1])
+    initial = f" {given[0]}." if given else ""
+    return f"{family},{initial}".strip()
+
+
+def _format_authors_safe(raw_authors: str) -> str:
+    if not raw_authors:
+        return "Unknown Author"
+    if raw_authors.strip().lower() == "unknown author":
+        return "Unknown Author"
+    parts = [a.strip() for a in raw_authors.split(" and ") if a.strip()]
+    formatted = [_format_author_name_safe(p) for p in parts if _format_author_name_safe(p)]
+    return "; ".join(formatted) if formatted else "Unknown Author"
+
+
+def _build_display_entry(entry: dict) -> dict:
+    """Map raw BibTeX entry to display_* keys with safe defaults."""
+    return {
+        "display_title": entry.get("title", "Untitled") or "Untitled",
+        "display_authors": _format_authors_safe(entry.get("author", "Unknown Author")),
+        "display_venue": entry.get("journal", entry.get("booktitle", "N/A")) or "N/A",
+        "display_year": entry.get("year", "") or "",
+        "display_abstract": entry.get("abstract", "No abstract in BibTeX") or "No abstract in BibTeX",
+    }
+
+
+def parse_bibtex_safe(text: str) -> tuple[list[dict], list[dict]]:
+    """Parse raw .bib text to (raw_entries, display_entries) with zero-trust defaults."""
+    parser = BibTexParser()
+    parser.customization = homogenize_latex_encoding
+    bibdb = bibtexparser.loads(text, parser=parser)
+    raw_entries = bibdb.entries or []
+    display_entries = [_build_display_entry(e) for e in raw_entries]
+    return raw_entries, display_entries
+
+
+def display_preview_safe(display_entries: list[dict]) -> None:
+    """Render Scholar-style preview using only display_* keys, wrapped in try/except."""
+    try:
+        for entry in display_entries or []:
+            st.markdown(f"### **{entry['display_title']}**")
+            st.markdown(f"<p style=\"color: #006621;\">{entry['display_authors']}</p>", unsafe_allow_html=True)
+            st.write(f"{entry['display_venue']}, {entry['display_year']}")
+    except Exception as e:
+        st.error(f"Preview error: {e}")
+
+
+# Parse uploaded file and show preview (safe-mode, zero DB)
 entries: List[Dict] | None = None
+display_entries: List[Dict] | None = None
 if uploaded is not None:
     try:
         text = uploaded.read().decode("utf-8")
-        parser = BibTexParser()
-        parser.customization = homogenize_latex_encoding
-        bibdb = bibtexparser.loads(text, parser=parser)
-        entries = bibdb.entries
+        entries, display_entries = parse_bibtex_safe(text)
         st.success(f"Parsed {len(entries)} entries")
-
     except Exception as e:
         st.error(f"Failed to parse file: {e}")
+        entries, display_entries = [], []
 
 # If DOI fetch requested, try to fetch metadata
 if doi_input and fetch_doi:
@@ -384,6 +447,7 @@ if doi_input and fetch_doi:
                 "publisher": msg.get("publisher", ""),
             }
             entries = [entry]
+            display_entries = [_build_display_entry(entry)]
             st.sidebar.success("Metadata fetched from Crossref")
         except Exception as e:
             st.sidebar.error(f"Crossref fetch failed: {e}")
@@ -395,119 +459,10 @@ if entries:
     titles = entries_to_titles(entries)
     authors = entries_to_authors(entries)
 
-    # Render a Google Scholar-style preview for parsed entries
-    def _format_initial(given: str) -> str:
-        return (given.strip()[0] + '.') if given and given.strip() else ''
-
-    def _format_author_name_from_parts(given: str, family: str) -> str:
-        if not family and not given:
-            return ''
-        if not family:
-            return given
-        initial = _format_initial(given)
-        return f"{family}, {initial}" if initial else family
-
-    def _authors_for_local_title(title_row: dict, parsed_authors: list[dict]) -> str:
-        # parsed_authors have keys: given_name, family_name, name_normalized, name, key, order
-        key = title_row.get('key')
-        auths = [a for a in parsed_authors if a.get('key') == key]
-        auths_sorted = sorted(auths, key=lambda x: int(x.get('order', 0)))
-        formatted = []
-        for a in auths_sorted:
-            given = a.get('given_name') or ''
-            family = a.get('family_name') or ''
-            if not (given or family):
-                # fallback to normalized/full name and split
-                name_norm = a.get('name_normalized') or a.get('name') or ''
-                parts = name_norm.strip().split()
-                if len(parts) == 1:
-                    given, family = parts[0], ''
-                else:
-                    given, family = ' '.join(parts[:-1]), parts[-1]
-            formatted.append(_format_author_name_from_parts(given, family))
-        return '; '.join([f for f in formatted if f])
-
-    def _authors_for_db_title(title_row: dict, db: RCAAPDatabase) -> str:
-        try:
-            at_rows = db._get_ws('Author-Title').get_all_records()
-            authors_rows = db._get_ws('Authors').get_all_records()
-        except Exception:
-            return ''
-        title_id = title_row.get('ID Title')
-        links = [r for r in at_rows if r.get('ID Title') == title_id]
-        ordered = sorted(links, key=lambda x: int(x.get('Order') or 0))
-        id_to_author = {r.get('ID Author'): r.get('Author Name') for r in authors_rows}
-        formatted = []
-        for l in ordered:
-            aid = l.get('ID Author')
-            name = id_to_author.get(aid, '')
-            if not name:
-                continue
-            parts = name.strip().split()
-            if len(parts) == 1:
-                given, family = parts[0], ''
-            else:
-                given, family = ' '.join(parts[:-1]), parts[-1]
-            formatted.append(_format_author_name_from_parts(given, family))
-        return '; '.join([f for f in formatted if f])
-
-    def _render_article_preview(title_row: dict, db: RCAAPDatabase | None = None, parsed_authors: list[dict] | None = None):
-        # Title + link
-        title_text = title_row.get('Title') or title_row.get('title') or ''
-        doi = (title_row.get('DOI') or title_row.get('doi') or '').strip()
-        url = title_row.get('URL') or title_row.get('url') or ''
-        link = ''
-        if doi:
-            link = f"https://doi.org/{doi}"
-        elif url:
-            link = url
-
-        if link:
-            st.markdown(f"### **[{st.utils._escape_html(title_text)}]({link})**", unsafe_allow_html=True)
-        else:
-            st.markdown(f"### **{st.utils._escape_html(title_text)}**", unsafe_allow_html=True)
-
-        # Author byline
-        if db is not None and title_row.get('ID Title'):
-            authors_line = _authors_for_db_title(title_row, db)
-        else:
-            authors_line = _authors_for_local_title(title_row, parsed_authors or [])
-
-        if authors_line:
-            st.markdown(f"<span style='color: #006621;'>{st.utils._escape_html(authors_line)}</span>", unsafe_allow_html=True)
-
-        # Venue & Year
-        venue_name = ''
-        year = title_row.get('Year') or title_row.get('year') or ''
-        if db is not None and title_row.get('ID Venue'):
-            try:
-                v = db._get_ws('Venue').get_all_records()
-                vm = next((r for r in v if r.get('ID Venue') == title_row.get('ID Venue')), None)
-                venue_name = vm.get('Venue Name') if vm else ''
-            except Exception:
-                venue_name = ''
-        else:
-            venue_name = title_row.get('journal') or title_row.get('Venue') or ''
-
-        if venue_name or year:
-            st.markdown(f"{st.utils._escape_html(venue_name)} {st.utils._escape_html(str(year))}")
-
-        st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
-
-    # Render previews (limit)
-    # When raw parsed entries are available, prefer displaying them directly using their
-    # original BibTeX keys to avoid mismatch with sheet column names. Build a display object
-    # from each raw entry and render it. Wrap each render in try/except so a single bad row
-    # does not crash the app.
-    # Using top-level helper _build_display_object_from_bib_entry to construct display objects from raw entries.
-
-    for entry in (entries or [])[:preview_limit]:
-        try:
-            merged = _build_display_object_from_bib_entry(entry)
-            _render_article_preview(merged, db=None, parsed_authors=None)
-        except Exception as e:
-            logger.exception("Failed to render preview for a parsed entry: %s", e)
-            st.warning(f"Preview unavailable for a parsed entry: {e}")
+    # Scholar UI preview (safe mode, zero DB) using display_* keys
+    if display_entries is None:
+        display_entries = [_build_display_entry(e) for e in entries]
+    display_preview_safe(display_entries)
 
     # RCAAP export (primary action): generate CSV from the relational sheets if available (fallback to local parsed rows)
     def generate_rcaap_csv(db: RCAAPDatabase | None, titles_list, authors_list) -> str:
@@ -761,31 +716,6 @@ elif "Local file" in creds_source:
 else:
     st.warning(creds_source)
 
-def _defensive_parse_entries(raw_entries: list[dict] | None) -> list[dict]:
-    """Convert raw BibTeX entries into preview-ready dicts with safe defaults."""
-    parsed_entries: list[dict] = []
-    for entry in raw_entries or []:
-        title = entry.get("title", "Unknown Title") or "Unknown Title"
-        authors_field = entry.get("author", "") or ""
-        authors_list = [a.strip() for a in authors_field.split(" and ") if a.strip()] if authors_field else []
-        venue = entry.get("journal", entry.get("booktitle", "Unknown Venue")) or "Unknown Venue"
-        year = entry.get("year", "Unknown Year") or "Unknown Year"
-        doi = entry.get("doi") or None
-        url = entry.get("url") or None
-        abstract = entry.get("abstract", "") or ""
-
-        parsed_entries.append({
-            "Title": title,
-            "Authors": authors_list,
-            "Venue": venue,
-            "Year": year,
-            "DOI": doi,
-            "URL": url,
-            "Abstract": abstract,
-        })
-    return parsed_entries
-
-
 def render_scholar_ui(entry: dict):
     """Render a single entry in the Scholar UI layout (defensive and precise).
 
@@ -819,50 +749,4 @@ def render_scholar_ui(entry: dict):
     # Venue & Year on the line below (regular font)
     st.markdown(f"<div style='margin-top:4px'>{venue} ({year})</div>", unsafe_allow_html=True)
 
-# Example usage
-if uploaded:
-    # Zero-trust parsing: never assume fields exist
-    try:
-        content = uploaded.read().decode("utf-8")
-        parser = BibTexParser()
-        parser.customization = homogenize_latex_encoding
-        bibdb = bibtexparser.loads(content, parser=parser)
-        raw_entries = bibdb.entries or []
-    except Exception as e:
-        st.error(f"Failed to parse uploaded file: {e}")
-        raw_entries = []
-
-    def _format_authors_zero_trust(raw_authors: str) -> str:
-        if not raw_authors:
-            return "Unknown Author"
-        parts = [a.strip() for a in raw_authors.split(" and ") if a.strip()]
-        formatted = []
-        for name in parts:
-            tokens = name.replace(",", " ").split()
-            if not tokens:
-                continue
-            family = tokens[-1]
-            given_tokens = tokens[:-1]
-            initial = f" {given_tokens[0][0]}." if given_tokens and given_tokens[0] else ""
-            formatted.append(f"{family},{initial}".strip())
-        return "; ".join(formatted) if formatted else "Unknown Author"
-
-    def display_preview_zero_trust(entries_list: list[dict]) -> None:
-        for entry in entries_list:
-            try:
-                title = entry.get("title", "Untitled") or "Untitled"
-                raw_authors = entry.get("author", "Unknown Author")
-                venue = entry.get("journal", entry.get("booktitle", "N/A")) or "N/A"
-                year = entry.get("year", "") or ""
-
-                authors_line = _format_authors_zero_trust(raw_authors)
-
-                # Strict UI: Title (bold), Authors (green/grey), Venue & Year below
-                st.markdown(f"**{title}**")
-                st.markdown(f"<span style='font-size:small;color:#6c757d'>{authors_line}</span>", unsafe_allow_html=True)
-                st.markdown(f"{venue} {year}")
-            except Exception as e:
-                st.error(f"Error rendering preview entry: {e}")
-
-    # Pre-save preview using only uploaded BibTeX (no DB access)
-    display_preview_zero_trust(raw_entries)
+# Example usage placeholder (intentionally left minimal; preview is handled above)
