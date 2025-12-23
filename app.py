@@ -12,6 +12,7 @@ from bibtexparser.customization import homogenize_latex_encoding
 
 from bibtex_parser import entries_to_titles, entries_to_authors
 from database import RCAAPDatabase
+from enrichment import enrich_entry, validate_entry, RCAAP_TYPES, RCAAP_REQUIRED_FIELDS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bib-to-rcaap-app")
@@ -396,6 +397,13 @@ def display_preview_safe(display_entries: list[dict]) -> None:
         st.error(f"Preview error: {e}")
 
 
+@st.cache_data
+def _fetch_openalex_cached(doi: str):
+    """Cached OpenAlex fetch to avoid repeated API calls."""
+    from enrichment import fetch_from_openalex
+    return fetch_from_openalex(doi)
+
+
 # Parse uploaded file and show preview (safe-mode, zero DB)
 entries: List[Dict] | None = None
 display_entries: List[Dict] | None = None
@@ -464,7 +472,60 @@ if entries:
         display_entries = [_build_display_entry(e) for e in entries]
     display_preview_safe(display_entries)
 
+    # ---- RCAAP Validation & Enrichment (Curation Layer) ----
+    st.markdown("---")
+    st.subheader("✏️ RCAAP Metadata Curation")
+    st.write("Review and complete required fields before syncing:")
+
+    curated_entries = []
+    for idx, entry in enumerate(entries):
+        with st.expander(f"📄 {entry.get('title', 'Untitled')[:50]}..."):
+            # Check if entry is valid
+            is_valid, missing = validate_entry(entry)
+            
+            if not is_valid:
+                st.warning(f"⚠️ Missing required RCAAP metadata: {', '.join(missing)}")
+            
+            # Enrich with OpenAlex if DOI present
+            enriched = entry.copy()
+            doi = entry.get('doi') or entry.get('DOI', '')
+            if doi:
+                openalex = _fetch_openalex_cached(doi)
+                if openalex and openalex.get('abstract'):
+                    if not enriched.get('abstract'):
+                        enriched['abstract'] = openalex['abstract']
+                    if not enriched.get('language'):
+                        enriched['language'] = openalex.get('language', 'en')
+            
+            # Editable fields
+            col1, col2 = st.columns(2)
+            with col1:
+                title = st.text_input(f"Title", value=enriched.get('title', ''), key=f"title_{idx}")
+                authors_str = st.text_input(f"Authors (semicolon-separated)", value=enriched.get('author', ''), key=f"authors_{idx}")
+                year = st.text_input(f"Year", value=enriched.get('year', ''), key=f"year_{idx}")
+            with col2:
+                language = st.text_input(f"Language", value=enriched.get('language', 'en'), key=f"lang_{idx}")
+                entry_type = st.selectbox(f"Type", RCAAP_TYPES, index=0 if enriched.get('type') not in RCAAP_TYPES else RCAAP_TYPES.index(enriched.get('type')), key=f"type_{idx}")
+                doi_field = st.text_input(f"DOI", value=enriched.get('doi', ''), key=f"doi_{idx}")
+            
+            abstract = st.text_area(f"Abstract", value=enriched.get('abstract', 'No abstract in BibTeX'), key=f"abstract_{idx}", height=100)
+            
+            # Update entry with curated values
+            enriched['title'] = title
+            enriched['author'] = authors_str
+            enriched['year'] = year
+            enriched['language'] = language
+            enriched['type'] = entry_type if entry_type != "Select Type..." else "other"
+            enriched['doi'] = doi_field
+            enriched['abstract'] = abstract
+            
+            curated_entries.append(enriched)
+    
+    # Validate before sync
+    entries_for_sync = curated_entries if curated_entries else entries
+
     # RCAAP export (primary action): generate CSV from the relational sheets if available (fallback to local parsed rows)
+
     def generate_rcaap_csv(db: RCAAPDatabase | None, titles_list, authors_list) -> str:
         import csv
         import io
@@ -571,124 +632,189 @@ if entries:
 
     # Secondary: sync to Google Sheets
     if st.button("Sync to Google Sheets", key="sync"):
-        try:
+        # Final validation before sync
+        sync_valid = True
+        invalid_entries = []
+        for e in entries_for_sync:
+            is_valid, missing = validate_entry(e)
+            if not is_valid:
+                invalid_entries.append((e.get('title', 'Untitled'), missing))
+                sync_valid = False
+        
+        if not sync_valid:
+            missing_str = "\n".join([f"• {title}: Missing {', '.join(m)}" for title, m in invalid_entries])
+            st.error(f"Cannot sync: Please fill in the missing metadata:\n{missing_str}")
+        else:
             try:
-                creds_info = st.secrets.get("gcp_service_account")
-            except Exception:
-                creds_info = None
-            db = RCAAPDatabase(creds_info=creds_info)
-
-            # Ensure relational sheets and headers exist
-            def _ensure_sheet_and_header(title: str, headers: list[str]):
                 try:
-                    ws = db._get_ws(title)
+                    creds_info = st.secrets.get("gcp_service_account")
                 except Exception:
-                    # create worksheet if missing
-                    db.sheet.add_worksheet(title=title, rows=100, cols=20)
-                    db._worksheets = {ws.title: ws for ws in db.sheet.worksheets()}
-                    ws = db._get_ws(title)
-                db._ensure_header(ws, headers)
+                    creds_info = None
+                db = RCAAPDatabase(creds_info=creds_info)
 
-            # Desired schema
-            _ensure_sheet_and_header('Publisher', ['ID Publisher', 'Publisher Name'])
-            _ensure_sheet_and_header('Venue', ['ID Venue', 'Venue Name', 'ID Publisher'])
-            _ensure_sheet_and_header('Title', ['ID Title', 'Title', 'Year', 'ID Venue', 'DOI', 'URL', 'Abstract', 'Type', 'Language', 'Keywords'])
-            _ensure_sheet_and_header('Authors', ['ID Author', 'Author Name', 'ORCID', 'Affiliation'])
-            _ensure_sheet_and_header('Author-Title', ['ID Author', 'ID Title', 'Order'])
+                # Ensure relational sheets and headers exist
+                def _ensure_sheet_and_header(title: str, headers: list[str]):
+                    try:
+                        ws = db._get_ws(title)
+                    except Exception:
+                        # create worksheet if missing
+                        db.sheet.add_worksheet(title=title, rows=100, cols=20)
+                        db._worksheets = {ws.title: ws for ws in db.sheet.worksheets()}
+                        ws = db._get_ws(title)
+                    db._ensure_header(ws, headers)
 
-            # helper getters / creators that operate on the sheet data
-            def _next_id(existing_ids: list[str], prefix: str) -> str:
-                nums = [int(s.lstrip(prefix)) for s in existing_ids if s.startswith(prefix) and s.lstrip(prefix).isdigit()]
-                maxn = max(nums) if nums else 0
-                return f"{prefix}{(maxn+1):03d}"
+                # Desired schema
+                _ensure_sheet_and_header('Publisher', ['ID Publisher', 'Publisher Name'])
+                _ensure_sheet_and_header('Venue', ['ID Venue', 'Venue Name', 'ID Publisher'])
+                _ensure_sheet_and_header('Title', ['ID Title', 'Title', 'Year', 'ID Venue', 'DOI', 'URL', 'Abstract', 'Type', 'Language', 'Keywords'])
+                _ensure_sheet_and_header('Authors', ['ID Author', 'Author Name', 'ORCID', 'Affiliation'])
+                _ensure_sheet_and_header('Author-Title', ['ID Author', 'ID Title', 'Order'])
 
-            def get_or_create_publisher(name: str) -> str:
-                name = (name or "").strip()
-                ws = db._get_ws('Publisher')
-                rows = ws.get_all_records()
-                for r in rows:
-                    if r.get('Publisher Name', '').strip() == name:
-                        return r.get('ID Publisher')
-                # create new
-                existing_ids = [r.get('ID Publisher', '') for r in rows]
-                nid = _next_id(existing_ids, 'P')
-                db._append_dicts('Publisher', [{'ID Publisher': nid, 'Publisher Name': name}])
-                return nid
+                # helper getters / creators that operate on the sheet data
+                def _next_id(existing_ids: list[str], prefix: str) -> str:
+                    nums = [int(s.lstrip(prefix)) for s in existing_ids if s.startswith(prefix) and s.lstrip(prefix).isdigit()]
+                    maxn = max(nums) if nums else 0
+                    return f"{prefix}{(maxn+1):03d}"
 
-            def get_or_create_venue(name: str, id_publisher: str) -> str:
-                name = (name or "").strip()
-                ws = db._get_ws('Venue')
-                rows = ws.get_all_records()
-                for r in rows:
-                    if r.get('Venue Name', '').strip() == name:
-                        # ensure publisher link
-                        if r.get('ID Publisher') != id_publisher:
-                            r['ID Publisher'] = id_publisher
-                        return r.get('ID Venue')
-                existing_ids = [r.get('ID Venue', '') for r in rows]
-                nid = _next_id(existing_ids, 'V')
-                db._append_dicts('Venue', [{'ID Venue': nid, 'Venue Name': name, 'ID Publisher': id_publisher}])
-                return nid
+                def get_or_create_publisher(name: str) -> str:
+                    name = (name or "").strip()
+                    ws = db._get_ws('Publisher')
+                    rows = ws.get_all_records()
+                    for r in rows:
+                        if r.get('Publisher Name', '').strip() == name:
+                            return r.get('ID Publisher')
+                    # create new
+                    existing_ids = [r.get('ID Publisher', '') for r in rows]
+                    nid = _next_id(existing_ids, 'P')
+                    db._append_dicts('Publisher', [{'ID Publisher': nid, 'Publisher Name': name}])
+                    return nid
 
-            def get_or_create_author(name: str, orcid: str = '', affiliation: str = '') -> str:
-                name = (name or "").strip()
-                ws = db._get_ws('Authors')
-                rows = ws.get_all_records()
-                for r in rows:
-                    if r.get('Author Name', '').strip() == name:
-                        # update missing info
-                        if orcid and not r.get('ORCID'):
-                            r['ORCID'] = orcid
-                        if affiliation and not r.get('Affiliation'):
-                            r['Affiliation'] = affiliation
-                        return r.get('ID Author')
-                existing_ids = [r.get('ID Author', '') for r in rows]
-                nid = _next_id(existing_ids, 'A')
-                db._append_dicts('Authors', [{'ID Author': nid, 'Author Name': name, 'ORCID': orcid or '', 'Affiliation': affiliation or ''}])
-                return nid
+                def get_or_create_venue(name: str, id_publisher: str) -> str:
+                    name = (name or "").strip()
+                    ws = db._get_ws('Venue')
+                    rows = ws.get_all_records()
+                    for r in rows:
+                        if r.get('Venue Name', '').strip() == name:
+                            # ensure publisher link
+                            if r.get('ID Publisher') != id_publisher:
+                                r['ID Publisher'] = id_publisher
+                            return r.get('ID Venue')
+                    existing_ids = [r.get('ID Venue', '') for r in rows]
+                    nid = _next_id(existing_ids, 'V')
+                    db._append_dicts('Venue', [{'ID Venue': nid, 'Venue Name': name, 'ID Publisher': id_publisher}])
+                    return nid
 
-            def create_or_get_title_id(title_row: dict) -> str:
-                # Prefer matching by DOI if present, else by Title text
-                ws = db._get_ws('Title')
-                rows = ws.get_all_records()
-                doi = (title_row.get('doi') or '').strip()
-                for r in rows:
-                    if doi and r.get('DOI', '').strip().lower() == doi.lower():
-                        return r.get('ID Title')
-                # Not found -> create
-                existing_ids = [r.get('ID Title', '') for r in rows]
-                nid = _next_id(existing_ids, 'T')
-                db._append_dicts('Title', [{
-                    'ID Title': nid,
-                    'Title': title_row.get('title', ''),
-                    'Year': title_row.get('year', ''),
-                    'ID Venue': title_row.get('id_venue', ''),
-                    'DOI': title_row.get('doi', ''),
-                    'URL': title_row.get('url', ''),
-                    'Abstract': title_row.get('abstract', ''),
-                    'Type': title_row.get('type', ''),
-                    'Language': title_row.get('language', ''),
-                    'Keywords': title_row.get('keywords', ''),
-                }])
-                return nid
+                def get_or_create_author(name: str, orcid: str = '', affiliation: str = '') -> str:
+                    name = (name or "").strip()
+                    ws = db._get_ws('Authors')
+                    rows = ws.get_all_records()
+                    for r in rows:
+                        if r.get('Author Name', '').strip() == name:
+                            # update missing info
+                            if orcid and not r.get('ORCID'):
+                                r['ORCID'] = orcid
+                            if affiliation and not r.get('Affiliation'):
+                                r['Affiliation'] = affiliation
+                            return r.get('ID Author')
+                    existing_ids = [r.get('ID Author', '') for r in rows]
+                    nid = _next_id(existing_ids, 'A')
+                    db._append_dicts('Authors', [{'ID Author': nid, 'Author Name': name, 'ORCID': orcid or '', 'Affiliation': affiliation or ''}])
+                    return nid
 
-            def ensure_author_title_link(id_author: str, id_title: str, order: int) -> None:
-                ws = db._get_ws('Author-Title')
-                rows = ws.get_all_records()
-                for r in rows:
-                    if r.get('ID Author') == id_author and r.get('ID Title') == id_title:
-                        # update order
-                        if int(r.get('Order') or 0) != order:
-                            r['Order'] = str(order)
-                        return
-                db._append_dicts('Author-Title', [{'ID Author': id_author, 'ID Title': id_title, 'Order': str(order)}])
+                def create_or_get_title_id(title_row: dict) -> str:
+                    # Prefer matching by DOI if present, else by Title text
+                    ws = db._get_ws('Title')
+                    rows = ws.get_all_records()
+                    doi = (title_row.get('doi') or '').strip()
+                    for r in rows:
+                        if doi and r.get('DOI', '').strip().lower() == doi.lower():
+                            return r.get('ID Title')
+                    # Not found -> create
+                    existing_ids = [r.get('ID Title', '') for r in rows]
+                    nid = _next_id(existing_ids, 'T')
+                    db._append_dicts('Title', [{
+                        'ID Title': nid,
+                        'Title': title_row.get('title', ''),
+                        'Year': title_row.get('year', ''),
+                        'ID Venue': title_row.get('id_venue', ''),
+                        'DOI': title_row.get('doi', ''),
+                        'URL': title_row.get('url', ''),
+                        'Abstract': title_row.get('abstract', ''),
+                        'Type': title_row.get('type', ''),
+                        'Language': title_row.get('language', ''),
+                        'Keywords': title_row.get('keywords', ''),
+                    }])
+                    return nid
 
-            # Build relational rows by calling the sync helper
-            from relational_sync import sync_entries
-            sync_entries(db, titles, authors, source=(uploaded.name if uploaded is not None else doi_input))
-            st.success('Successfully synced to Google Sheets!')
-        except Exception as e:
-            st.error(f"Sync failed: {e}")
+                def ensure_author_title_link(id_author: str, id_title: str, order: int) -> None:
+                    ws = db._get_ws('Author-Title')
+                    rows = ws.get_all_records()
+                    for r in rows:
+                        if r.get('ID Author') == id_author and r.get('ID Title') == id_title:
+                            # update order
+                            if int(r.get('Order') or 0) != order:
+                                r['Order'] = str(order)
+                            return
+                    db._append_dicts('Author-Title', [{'ID Author': id_author, 'ID Title': id_title, 'Order': str(order)}])
+
+                # Sync each curated entry to Google Sheets
+                synced_count = 0
+                for idx, entry in enumerate(curated_entries, 1):
+                    st.write(f"🔄 Syncing entry {idx}/{len(curated_entries)}...")
+                    try:
+                        # Safe extraction
+                        title_text = (entry.get('title') or '').strip() or 'Untitled'
+                        authors_text = (entry.get('authors') or '').strip()
+                        year_text = (entry.get('year') or '').strip() or '0000'
+                        doi_text = (entry.get('doi') or '').strip()
+                        abstract_text = (entry.get('abstract') or '').strip()
+                        language_text = (entry.get('language') or '').strip() or 'en'
+                        rcaap_type_text = (entry.get('type') or '').strip() or 'article'
+
+                        # Get or create publisher
+                        pub_id = get_or_create_publisher(entry, db_exists)
+                        venue_id = get_or_create_venue(entry, db_exists)
+
+                        # Create title
+                        title_row = {
+                            'title': title_text,
+                            'year': year_text,
+                            'id_venue': venue_id if db_exists else '',
+                            'doi': doi_text,
+                            'url': (entry.get('url') or '').strip(),
+                            'abstract': abstract_text,
+                            'type': rcaap_type_text,
+                            'language': language_text,
+                            'keywords': (entry.get('keywords') or '').strip(),
+                        }
+                        title_id = create_or_get_title_id(title_row) if db_exists else _next_id([], 'T')
+
+                        # Parse authors
+                        if authors_text:
+                            author_list = [a.strip() for a in authors_text.split(';') if a.strip()]
+                            for order_idx, author_str in enumerate(author_list, 1):
+                                name_parts = author_str.split()
+                                if len(name_parts) >= 2:
+                                    first_name = name_parts[0]
+                                    last_name = ' '.join(name_parts[1:])
+                                else:
+                                    first_name = author_str
+                                    last_name = ''
+
+                                if db_exists:
+                                    author_id = get_or_create_author(first_name, last_name, db)
+                                    ensure_author_title_link(author_id, title_id, order_idx)
+
+                        synced_count += 1
+                        st.success(f"✅ Entry {idx} synced!")
+                    except Exception as sync_entry_err:
+                        st.error(f"❌ Entry {idx} error: {str(sync_entry_err)}")
+
+                st.info(f"Sync complete: {synced_count}/{len(curated_entries)} entries synced to Google Sheets.")
+
+            except Exception as e:
+                st.error(f"Sync failed: {e}")
+
 else:
     st.info("Upload a .bib file from the sidebar to start, or fetch metadata by DOI.")
 
