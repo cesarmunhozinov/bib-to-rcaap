@@ -80,15 +80,17 @@ def entries_to_authors(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         # split by ' and ' which is BibTeX author separator
         authors = [a.strip() for a in authors_field.split(" and ") if a.strip()]
         for idx, a in enumerate(authors, start=1):
-            name_norm = _normalize_author_name(a)
+            # Clean the raw author name to remove BibTeX protection braces
+            a_clean = _clean_text(a)
+            name_norm = _normalize_author_name(a_clean)
             given, family = _split_name(name_norm)
-            orcid = _extract_orcid(a)
+            orcid = _extract_orcid(a_clean)
             out.append({
-                "name": a.strip(),  # original representation
+                "name": a_clean,  # cleaned representation without braces
                 "name_normalized": name_norm,
                 "given_name": given,
                 "family_name": family,
-                "affiliation": e.get("affiliation", e.get("institution", "")),
+                "affiliation": _clean_text(e.get("affiliation", e.get("institution", ""))),
                 "key": key,
                 "order": idx,
                 "orcid": orcid,
@@ -104,8 +106,9 @@ def _clean_text(s: str) -> str:
     if not s:
         return ""
     s = s.strip()
-    # Remove all braces that often wrap titles in BibTeX
-    s = s.replace("{", "").replace("}", "")
+    # Remove all braces that often wrap titles in BibTeX (including protection braces like {D}ecision)
+    while "{" in s or "}" in s:
+        s = s.replace("{", "").replace("}", "")
     # collapse multiple spaces
     import re
 
