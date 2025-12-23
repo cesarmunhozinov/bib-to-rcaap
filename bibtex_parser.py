@@ -220,5 +220,39 @@ def map_bibtex_to_paper_object(entry: Dict[str, Any]) -> Dict[str, Any]:
     return paper
 
 
+def parse_raw_bib_entries(content: str) -> List[Dict[str, Any]]:
+    """Parse raw BibTeX content into a list of defensive Paper-like dicts for preview.
+
+    This function intentionally uses .get with defaults and returns a simple structure
+    suitable for the pre-save preview (no DB queries).
+    """
+    parser = BibTexParser()
+    parser.customization = homogenize_latex_encoding
+    bibdb = bibtexparser.loads(content, parser=parser)
+    raw_entries = getattr(bibdb, "entries", []) or []
+
+    parsed = []
+    for e in raw_entries:
+        title = e.get("title", "Unknown Title") or "Unknown Title"
+        authors_field = e.get("author", "") or ""
+        authors = [a.strip() for a in authors_field.split(" and ") if a.strip()] if authors_field else []
+        venue = e.get("journal", e.get("booktitle", "Unknown Venue")) or "Unknown Venue"
+        year = e.get("year", "Unknown Year") or "Unknown Year"
+        doi = e.get("doi") or None
+        url = e.get("url") or None
+        abstract = e.get("abstract", "") or ""
+
+        parsed.append({
+            "Title": _clean_text(title),
+            "Authors": authors,
+            "Venue": _clean_text(venue),
+            "Year": year,
+            "DOI": doi,
+            "URL": url,
+            "Abstract": _clean_text(abstract),
+        })
+    return parsed
+
+
 if __name__ == "__main__":
     print("bibtex_parser: provide parse_bib_file(), entries_to_titles(), entries_to_authors(), entries_to_events()")

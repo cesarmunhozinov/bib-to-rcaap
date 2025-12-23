@@ -821,7 +821,7 @@ def render_scholar_ui(entry: dict):
 
 # Example usage
 if uploaded:
-    # Use the dedicated parser for raw BibTeX preview (defensive and consistent)
+    # Zero-trust parsing: never assume fields exist
     try:
         content = uploaded.read().decode("utf-8")
         parser = BibTexParser()
@@ -832,13 +832,37 @@ if uploaded:
         st.error(f"Failed to parse uploaded file: {e}")
         raw_entries = []
 
-    parsed_entries = _defensive_parse_entries(raw_entries)
+    def _format_authors_zero_trust(raw_authors: str) -> str:
+        if not raw_authors:
+            return "Unknown Author"
+        parts = [a.strip() for a in raw_authors.split(" and ") if a.strip()]
+        formatted = []
+        for name in parts:
+            tokens = name.replace(",", " ").split()
+            if not tokens:
+                continue
+            family = tokens[-1]
+            given_tokens = tokens[:-1]
+            initial = f" {given_tokens[0][0]}." if given_tokens and given_tokens[0] else ""
+            formatted.append(f"{family},{initial}".strip())
+        return "; ".join(formatted) if formatted else "Unknown Author"
 
-    # Pre-save preview: display only parsed_entries (no DB queries) and avoid crashes
-    for entry in parsed_entries:
-        try:
-            render_scholar_ui(entry)
-        except KeyError as ke:
-            st.error(f"Missing field in entry: {ke}")
-        except Exception as e:
-            st.error(f"Error rendering entry: {e}")
+    def display_preview_zero_trust(entries_list: list[dict]) -> None:
+        for entry in entries_list:
+            try:
+                title = entry.get("title", "Untitled") or "Untitled"
+                raw_authors = entry.get("author", "Unknown Author")
+                venue = entry.get("journal", entry.get("booktitle", "N/A")) or "N/A"
+                year = entry.get("year", "") or ""
+
+                authors_line = _format_authors_zero_trust(raw_authors)
+
+                # Strict UI: Title (bold), Authors (green/grey), Venue & Year below
+                st.markdown(f"**{title}**")
+                st.markdown(f"<span style='font-size:small;color:#6c757d'>{authors_line}</span>", unsafe_allow_html=True)
+                st.markdown(f"{venue} {year}")
+            except Exception as e:
+                st.error(f"Error rendering preview entry: {e}")
+
+    # Pre-save preview using only uploaded BibTeX (no DB access)
+    display_preview_zero_trust(raw_entries)
