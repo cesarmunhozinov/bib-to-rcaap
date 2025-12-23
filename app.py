@@ -784,9 +784,17 @@ if entries:
                         language_text = (entry.get('language') or '').strip() or 'en'
                         rcaap_type_text = (entry.get('type') or '').strip() or 'article'
 
-                        # Get or create publisher
-                        pub_id = get_or_create_publisher(entry, db_exists)
-                        venue_id = get_or_create_venue(entry, db_exists)
+                        # Get or create publisher and venue
+                        try:
+                            publisher_name = entry.get('publisher', 'Unknown Publisher')
+                            venue_name = entry.get('journal', '') or entry.get('booktitle', '') or 'Unknown Venue'
+                            
+                            pub_id = get_or_create_publisher(publisher_name)
+                            venue_id = get_or_create_venue(venue_name, pub_id)
+                        except Exception as db_err:
+                            st.warning(f"Database connection issue, using defaults: {db_err}")
+                            pub_id = 'P001'
+                            venue_id = 'V001'
 
                         # Determine Status based on validation
                         is_valid, _ = validate_entry(entry)
@@ -796,7 +804,7 @@ if entries:
                         title_row = {
                             'title': title_text,
                             'year': year_text,
-                            'id_venue': venue_id if db_exists else '',
+                            'id_venue': venue_id,
                             'doi': doi_text,
                             'url': (entry.get('url') or '').strip(),
                             'abstract': abstract_text,
@@ -805,23 +813,20 @@ if entries:
                             'keywords': (entry.get('keywords') or '').strip(),
                             'status': status,
                         }
-                        title_id = create_or_get_title_id(title_row) if db_exists else _next_id([], 'T')
+                        title_id = create_or_get_title_id(title_row)
 
                         # Parse authors
                         if authors_text:
                             author_list = [a.strip() for a in authors_text.split(';') if a.strip()]
                             for order_idx, author_str in enumerate(author_list, 1):
-                                name_parts = author_str.split()
-                                if len(name_parts) >= 2:
-                                    first_name = name_parts[0]
-                                    last_name = ' '.join(name_parts[1:])
-                                else:
-                                    first_name = author_str
-                                    last_name = ''
-
-                                if db_exists:
-                                    author_id = get_or_create_author(first_name, last_name, db)
+                                try:
+                                    # Parse author name
+                                    author_full_name = author_str.strip()
+                                    
+                                    author_id = get_or_create_author(author_full_name)
                                     ensure_author_title_link(author_id, title_id, order_idx)
+                                except Exception as author_err:
+                                    st.warning(f"Could not link author '{author_str}': {author_err}")
 
                         synced_count += 1
                         st.success(f"✅ Entry {idx} synced!")
