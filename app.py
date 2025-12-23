@@ -10,7 +10,7 @@ import bibtexparser
 from bibtexparser.bparser import BibTexParser
 from bibtexparser.customization import homogenize_latex_encoding
 
-from bibtex_parser import entries_to_titles, entries_to_authors
+from bibtex_parser import entries_to_titles, entries_to_authors, _clean_text
 from database import RCAAPDatabase
 from enrichment import enrich_entry, validate_entry, RCAAP_TYPES, RCAAP_REQUIRED_FIELDS
 
@@ -818,14 +818,17 @@ if entries:
                         }
                         title_id = create_or_get_title_id(title_row)
 
-                        # Parse authors
+                        # Parse authors - split by ' and ' (BibTeX standard)
                         if authors_text:
-                            st.write(f"   👥 Processing {len(authors_text.split(';'))} author(s)...")
-                            author_list = [a.strip() for a in authors_text.split(';') if a.strip()]
-                            for order_idx, author_str in enumerate(author_list, 1):
+                            # Explicit split by ' and ' separator
+                            author_list = [a.strip() for a in authors_text.split(' and ') if a.strip()]
+                            st.write(f"   👥 Processing {len(author_list)} author(s)...")
+                            
+                            # The Sync Loop: iterate through each author individually
+                            for order_idx, author_str in enumerate(author_list, start=1):
                                 try:
-                                    # Parse author name
-                                    author_full_name = author_str.strip()
+                                    # Clean author name to remove BibTeX protection braces
+                                    author_full_name = _clean_text(author_str.strip())
                                     st.write(f"      → Author {order_idx}: {author_full_name}")
                                     
                                     author_id = get_or_create_author(author_full_name)
