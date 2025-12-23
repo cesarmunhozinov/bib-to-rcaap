@@ -762,37 +762,90 @@ else:
     st.warning(creds_source)
 
 def render_scholar_ui(entry: dict):
-    """Render a single entry in the Scholar UI layout."""
-    title = entry.get("Title", "Unknown Title")
-    doi = entry.get("DOI")
-    authors = entry.get("Authors", ["Unknown Author"])
-    venue = entry.get("Venue", "Unknown Venue")
-    year = entry.get("Year", "Unknown Year")
+    """Render a single entry in the Scholar UI layout (defensive and precise).
 
-    # Title (bold, large, hyperlinked if DOI exists)
+    UI rules:
+    - Title in bold
+    - Authors in a green/grey sub-header (small font)
+    - Venue & Year on the next line (regular font)
+    - Preview uses semicolon-separated authors
+    """
+    # Defensive extraction and fallback
+    title = entry.get("Title") if entry.get("Title") is not None else "Unknown Title"
+    doi = entry.get("DOI") if entry.get("DOI") is not None else None
+    authors = entry.get("Authors") if entry.get("Authors") is not None else []
+    venue = entry.get("Venue") if entry.get("Venue") is not None else "Unknown Venue"
+    year = entry.get("Year") if entry.get("Year") is not None else "Unknown Year"
+
+    # Title (bold). If DOI is present, make a DOI link to https://doi.org/<doi> when it's not a url
     if doi:
-        st.markdown(f"**[{title}]({doi})**")
+        doi_url = doi if doi.startswith("http") else f"https://doi.org/{doi}"
+        st.markdown(f"**[{title}]({doi_url})**")
     else:
         st.markdown(f"**{title}**")
 
-    # Author Line (small font, green/grey color)
-    author_line = ", ".join(authors)
-    st.markdown(f"<span style='font-size:small;color:grey;'>{author_line}</span>", unsafe_allow_html=True)
+    # Authors: join with semicolons for preview per spec; small font and green/grey color
+    try:
+        author_line = "; ".join(authors) if authors else "Unknown Author"
+    except Exception:
+        author_line = "Unknown Author"
+    st.markdown(f"<div style='font-size:small;color:#6c757d; margin-top:4px'>{author_line}</div>", unsafe_allow_html=True)
 
-    # Venue & Year (regular font)
-    st.write(f"{venue} ({year})")
+    # Venue & Year on the line below (regular font)
+    st.markdown(f"<div style='margin-top:4px'>{venue} ({year})</div>", unsafe_allow_html=True)
 
 # Example usage
 if uploaded:
+    # Defensive parsing: build a simple list of normalized dicts from the uploaded file
     content = uploaded.read().decode("utf-8")
     parser = BibTexParser()
     parser.customization = homogenize_latex_encoding
     bibdb = bibtexparser.loads(content, parser=parser)
-    entries = bibdb.entries
+    raw_entries = bibdb.entries or []
 
-    for entry in entries:
+    parsed_entries = []
+    for e in raw_entries:
+        # Use .get with safe defaults to prevent KeyError / NoneType issues
+        title = e.get("title", "Unknown Title") or "Unknown Title"
+        authors_field = e.get("author", "") or ""
+        authors_list = [a.strip() for a in authors_field.split(" and ") if a.strip()] if authors_field else []
+        venue = e.get("journal", e.get("booktitle", "Unknown Venue")) or "Unknown Venue"
+        year = e.get("year", "Unknown Year") or "Unknown Year"
+        doi = e.get("doi") or None
+        url = e.get("url") or None
+        abstract = e.get("abstract", "") or ""
+
+        parsed_entries.append({
+            "Title": title,
+            "Authors": authors_list,
+            "Venue": venue,
+            "Year": year,
+            "DOI": doi,
+            "URL": url,
+            "Abstract": abstract,
+        })
+
+    # Pre-save preview: use only the parsed_entries (no Google Sheets queries here)
+    for entry in parsed_entries:
         try:
-            paper = map_bibtex_to_paper_object(entry)
-            render_scholar_ui(paper)
+            # Traceback guard: check values before display
+            title = entry.get("Title") if entry.get("Title") is not None else "Unknown Title"
+            authors = entry.get("Authors") if entry.get("Authors") is not None else []
+            venue = entry.get("Venue") if entry.get("Venue") is not None else "Unknown Venue"
+            year = entry.get("Year") if entry.get("Year") is not None else "Unknown Year"
+
+            # Render using Scholar UI (defensive and exact format)
+            # Ensure authors are joined with semicolons for the preview
+            entry_for_ui = {
+                "Title": title,
+                "DOI": entry.get("DOI"),
+                "Authors": authors,
+                "Venue": venue,
+                "Year": year,
+            }
+            render_scholar_ui(entry_for_ui)
+        except KeyError as ke:
+            st.error(f"Missing field in entry: {ke}")
         except Exception as e:
+            # Catch NoneType and other issues and continue rendering remaining entries
             st.error(f"Error rendering entry: {e}")
